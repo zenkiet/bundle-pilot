@@ -1,0 +1,14 @@
+commit-msg:
+  commands:
+    conventional-commit:
+      run: sh scripts/validate-commit-msg.sh {1}
+
+pre-commit:
+  jobs:
+    - name: fmt
+      glob: "*.go"
+      run: golangci-lint fmt {staged_files}
+      stage_fixed: true
+    - name: lint
+      glob: "*.go"
+      run: golangci-lint run ./...

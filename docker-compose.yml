@@ -1,0 +1,12 @@
+services:
+  gateway:
+    build: .
+    ports:
+      - "8080:8080"
+    #mem_limit: 384m
+    stop_grace_period: 15s
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - ./dist:/app/dist:ro   # with an s3 source drop :ro, the mirror writes versions/
