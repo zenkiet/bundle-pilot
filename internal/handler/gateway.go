@@ -59,7 +59,7 @@ func (rt *Router) data(w http.ResponseWriter, r *http.Request) {
 			rt.log.Debug("bundle switch", "from", cur.Version, "to", b.Version, "via", via)
 		}
 	}
-	writeJSON(w, struct {
+	writeJSON(w, http.StatusOK, struct {
 		Bundle string `json:"bundle"`
 		Via    string `json:"via"`
 	}{b.Version, via})
@@ -99,11 +99,12 @@ func (rt *Router) status(w http.ResponseWriter, _ *http.Request) {
 	for _, b := range snap.Bundles() {
 		out.Bundles = append(out.Bundles, bundleStatus{b.Version, b.Len(), b.Bytes()})
 	}
-	writeJSON(w, out)
+	writeJSON(w, http.StatusOK, out)
 }
 
-func writeJSON(w http.ResponseWriter, v any) {
+func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
 	_ = json.MarshalWrite(w, v)
 }

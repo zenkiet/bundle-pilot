@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -12,14 +13,21 @@ import (
 	"time"
 
 	"github.com/zenkiet/edge-gateway/internal/config"
+	"github.com/zenkiet/edge-gateway/internal/domain"
 	"github.com/zenkiet/edge-gateway/internal/handler"
 	"github.com/zenkiet/edge-gateway/internal/infrastructure/bundlefs"
+	"github.com/zenkiet/edge-gateway/internal/ui"
 	"github.com/zenkiet/edge-gateway/internal/usecase"
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "check" {
-		os.Exit(check(os.Args[2:]))
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "check":
+			os.Exit(check(os.Args[2:]))
+		case "import":
+			os.Exit(importConfig(os.Args[2:]))
+		}
 	}
 	var lvl slog.LevelVar
 	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: &lvl}))
@@ -43,9 +51,10 @@ func run(log *slog.Logger, lvl *slog.LevelVar) error {
 	defer stop()
 	go cat.Watch(ctx, 5*time.Second)
 
+	assets, _ := fs.Sub(ui.Build, "build")
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           handler.New(cat, log),
+		Handler:           handler.New(cat, assets, log),
 		ReadHeaderTimeout: 5 * time.Second,
 		WriteTimeout:      time.Minute,
 		IdleTimeout:       2 * time.Minute,
@@ -99,6 +108,40 @@ func check(args []string) int {
 	if len(snap.Errors) > 0 {
 		return 1
 	}
+	return 0
+}
+
+// importConfig validates a JSON config and stores it as DIST/config.pb.
+func importConfig(args []string) int {
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "usage: gateway import config.json [DIST]")
+		return 2
+	}
+	cfg, err := config.Load(os.Getenv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
+	if len(args) > 1 {
+		cfg.Dist = args[1]
+	}
+	data, err := os.ReadFile(args[0])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
+	pb, err := domain.DecodeConfig(data, true)
+	if err == nil {
+		_, err = domain.ParseConfig(pb)
+	}
+	if err == nil {
+		err = bundlefs.New(os.DirFS(cfg.Dist), cfg.Dist, slog.New(slog.DiscardHandler), nil).WriteConfig(pb)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		return 1
+	}
+	fmt.Printf("wrote %s/config.pb\n", cfg.Dist)
 	return 0
 }
 

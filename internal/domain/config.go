@@ -12,6 +12,10 @@ import (
 	"strings"
 	"time"
 
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
+
+	"github.com/zenkiet/edge-gateway/internal/gen/configv1"
 	"github.com/zenkiet/edge-gateway/internal/pkg/version"
 )
 
@@ -79,57 +83,40 @@ type bound struct {
 
 type Facts map[string]string
 
-type configFile struct {
-	Schema     string            `json:"$schema"`
-	Source     *sourceFile       `json:"source"`
-	DateFormat string            `json:"dateFormat"`
-	Default    string            `json:"default"`
-	Backend    map[string]string `json:"backend"`
-	Rules      []ruleFile        `json:"rules"`
-}
-
-type sourceFile struct {
-	Type            string `json:"type"`
-	Bucket          string `json:"bucket"`
-	Prefix          string `json:"prefix"`
-	Endpoint        string `json:"endpoint"`
-	Region          string `json:"region"`
-	AccessKeyID     string `json:"accessKeyId"`
-	SecretAccessKey string `json:"secretAccessKey"`
-	Poll            string `json:"poll"`
-}
-
-type ruleFile struct {
-	ID     string         `json:"id"`
-	Note   string         `json:"note"`
-	When   jsontext.Value `json:"when"`
-	Bundle string         `json:"bundle"`
-	Until  string         `json:"until"`
-}
-
-func ParseConfig(data []byte) (Config, error) {
-	var f configFile
-	if err := json.Unmarshal(data, &f, json.RejectUnknownMembers(true)); err != nil {
-		return Config{}, locate(data, err)
+// DecodeConfig reads config.pb, or its JSON form when asJSON is set; unknown
+// JSON fields are rejected with a line and column.
+func DecodeConfig(data []byte, asJSON bool) (*configv1.Config, error) {
+	pb := &configv1.Config{}
+	if asJSON {
+		return pb, protojson.Unmarshal(data, pb)
 	}
+	return pb, proto.Unmarshal(data, pb)
+}
+
+// EncodeConfig writes config.pb bytes, the same bytes for the same content.
+func EncodeConfig(pb *configv1.Config) ([]byte, error) {
+	return proto.MarshalOptions{Deterministic: true}.Marshal(pb)
+}
+
+func ParseConfig(pb *configv1.Config) (Config, error) {
 	l := version.Default
-	if f.DateFormat != "" {
+	if pb.DateFormat != "" {
 		var err error
-		if l, err = version.ParseLayout(f.DateFormat); err != nil {
-			return Config{}, fmt.Errorf("dateFormat %q: %w", f.DateFormat, err)
+		if l, err = version.ParseLayout(pb.DateFormat); err != nil {
+			return Config{}, fmt.Errorf("dateFormat %q: %w", pb.DateFormat, err)
 		}
 	}
-	src, err := parseSource(f.Source)
+	src, err := parseSource(pb.Source)
 	if err != nil {
 		return Config{}, err
 	}
-	c := Config{Default: strings.TrimSpace(f.Default), Dates: l, Backend: NewMapping(l, f.Backend), Source: src}
+	c := Config{Default: strings.TrimSpace(pb.DefaultBundle), Dates: l, Backend: NewMapping(l, pb.Backend), Source: src}
 	kind, err := c.Backend.kind(l)
 	if err != nil {
 		return Config{}, err
 	}
 	ids := map[string]bool{}
-	for i, rf := range f.Rules {
+	for i, rf := range pb.Rules {
 		r, err := parseRule(i, rf, l)
 		if err == nil && ids[r.ID] {
 			err = errors.New("duplicate id")
@@ -229,8 +216,8 @@ func (b bound) holds(l version.Layout, v string) bool {
 	return c >= 0
 }
 
-func parseRule(i int, rf ruleFile, l version.Layout) (Rule, error) {
-	r := Rule{ID: strings.TrimSpace(rf.ID), Note: strings.TrimSpace(rf.Note), When: rf.When, Bundle: strings.TrimSpace(rf.Bundle)}
+func parseRule(i int, rf *configv1.Rule, l version.Layout) (Rule, error) {
+	r := Rule{ID: strings.TrimSpace(rf.Id), Note: strings.TrimSpace(rf.Note), Bundle: strings.TrimSpace(rf.Bundle)}
 	switch {
 	case r.ID == "":
 		r.ID = "#" + strconv.Itoa(i+1)
@@ -246,11 +233,15 @@ func parseRule(i int, rf ruleFile, l version.Layout) (Rule, error) {
 			return r, fmt.Errorf("until %q: want YYYY-MM-DD or an RFC 3339 time", rf.Until)
 		}
 	}
-	if rf.When.Kind() != '{' {
+	if rf.When == nil {
 		return r, errors.New(`when is required: {"fact": value}`)
 	}
+	raw, err := protojson.Marshal(rf.When)
+	if err != nil {
+		return r, err
+	}
 	var when map[string]jsontext.Value
-	if err := json.Unmarshal(rf.When, &when); err != nil {
+	if err := json.Unmarshal(raw, &when); err != nil {
 		return r, err
 	}
 	if len(when) == 0 {
@@ -272,20 +263,20 @@ func parseRule(i int, rf ruleFile, l version.Layout) (Rule, error) {
 		}
 		r.conds = append(r.conds, c)
 	}
-	canon := slices.Clone(rf.When)
-	if err := canon.Canonicalize(); err == nil {
-		r.key = strings.ToLower(string(canon))
+	r.When = jsontext.Value(raw)
+	if err := r.When.Canonicalize(); err == nil {
+		r.key = strings.ToLower(string(r.When))
 	}
 	return r, nil
 }
 
-func parseSource(f *sourceFile) (Source, error) {
+func parseSource(f *configv1.Source) (Source, error) {
 	if f == nil {
 		return Source{}, nil
 	}
 	switch f.Type {
 	case "", "local":
-		if *f != (sourceFile{Type: f.Type}) {
+		if !proto.Equal(f, &configv1.Source{Type: f.Type}) {
 			return Source{}, errors.New("source: a local source takes no other fields")
 		}
 		return Source{}, nil
@@ -294,7 +285,7 @@ func parseSource(f *sourceFile) (Source, error) {
 		return Source{}, fmt.Errorf("source.type %q: want local or s3", f.Type)
 	}
 	s := Source{Type: "s3", Bucket: strings.TrimSpace(f.Bucket), Prefix: strings.Trim(f.Prefix, "/ "), Endpoint: strings.TrimRight(strings.TrimSpace(f.Endpoint), "/"),
-		Region: strings.TrimSpace(f.Region), AccessKeyID: strings.TrimSpace(f.AccessKeyID), SecretAccessKey: strings.TrimSpace(f.SecretAccessKey), Poll: 30 * time.Second}
+		Region: strings.TrimSpace(f.Region), AccessKeyID: strings.TrimSpace(f.AccessKeyId), SecretAccessKey: strings.TrimSpace(f.SecretAccessKey), Poll: 30 * time.Second}
 	for _, req := range [...][2]string{{"bucket", s.Bucket}, {"region", s.Region}} {
 		if req[1] == "" {
 			return s, fmt.Errorf("source.%s is required", req[0])
@@ -421,22 +412,4 @@ func validName(s string) bool {
 	return s != "" && len(s) <= 64 && !strings.ContainsFunc(s, func(c rune) bool {
 		return (c < '0' || c > '9') && (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && c != '.' && c != '_' && c != '-'
 	})
-}
-
-// locate prefixes a decode error with its line and column for hand editors.
-func locate(data []byte, err error) error {
-	off := int64(-1)
-	var se *json.SemanticError
-	var sy *jsontext.SyntacticError
-	switch {
-	case errors.As(err, &se):
-		off = se.ByteOffset
-	case errors.As(err, &sy):
-		off = sy.ByteOffset
-	}
-	if off < 0 || off > int64(len(data)) {
-		return err
-	}
-	before := data[:off]
-	return fmt.Errorf("line %d col %d: %w", bytes.Count(before, []byte("\n"))+1, int(off)-bytes.LastIndexByte(before, '\n'), err)
 }

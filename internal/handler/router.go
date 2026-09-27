@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -18,12 +19,15 @@ type Router struct {
 
 // New routes with a ServeMux: method patterns answer the wrong method with
 // 405 and Allow, and unclean paths are redirected.
-func New(cat *usecase.Catalog, log *slog.Logger) http.Handler {
+func New(cat *usecase.Catalog, ui fs.FS, log *slog.Logger) http.Handler {
 	rt := &Router{cat: cat, log: log, decisions: map[string]uint64{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(http.ResponseWriter, *http.Request) {})
 	mux.HandleFunc("POST /__gateway/data", rt.data)
 	mux.HandleFunc("GET /__gateway/status", rt.status)
+	mux.HandleFunc("GET /__gateway/config", rt.getConfig)
+	mux.HandleFunc("PUT /__gateway/config", rt.putConfig)
+	mux.Handle("GET /__gateway/ui/", http.StripPrefix("/__gateway/ui/", http.FileServerFS(ui)))
 	mux.Handle("GET /__gateway/", http.NotFoundHandler())
 	mux.HandleFunc("GET /", rt.root)
 	return mux

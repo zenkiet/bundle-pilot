@@ -10,6 +10,7 @@ import (
 	"hash/fnv"
 	"io/fs"
 	"log/slog"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/zenkiet/edge-gateway/internal/domain"
+	"github.com/zenkiet/edge-gateway/internal/gen/configv1"
 	"github.com/zenkiet/edge-gateway/internal/infrastructure/mirror"
 	"github.com/zenkiet/edge-gateway/internal/infrastructure/mirror/s3"
 	"github.com/zenkiet/edge-gateway/internal/pkg/asset"
@@ -24,7 +26,7 @@ import (
 
 const (
 	versionsDir = "versions"
-	configFile  = "config.json"
+	configFile  = "config.pb"
 	maxConfig   = 1 << 20
 )
 
@@ -201,7 +203,11 @@ func (s *Source) loadConfig(inv *domain.Inventory) domain.Config {
 	info, err := fs.Stat(s.fsys, configFile)
 	if errors.Is(err, fs.ErrNotExist) {
 		s.config = domain.Config{}
-		inv.Issues = append(inv.Issues, "config.json not found: no rules, every visitor gets the default bundle")
+		msg := "config.pb not found: no rules, every visitor gets the default bundle"
+		if _, err := fs.Stat(s.fsys, "config.json"); err == nil {
+			msg += "; convert config.json with: gateway import config.json"
+		}
+		inv.Issues = append(inv.Issues, msg)
 		return s.config
 	}
 	if err == nil && info.Size() > maxConfig {
@@ -212,16 +218,49 @@ func (s *Source) loadConfig(inv *domain.Inventory) domain.Config {
 		data, err = fs.ReadFile(s.fsys, configFile)
 	}
 	if err != nil {
-		inv.Errors = append(inv.Errors, "config.json unreadable, keeping previous: "+err.Error())
+		inv.Errors = append(inv.Errors, "config.pb unreadable, keeping previous: "+err.Error())
 		return s.config
 	}
-	c, err := domain.ParseConfig(data)
+	pb, err := domain.DecodeConfig(data, false)
+	var c domain.Config
+	if err == nil {
+		c, err = domain.ParseConfig(pb)
+	}
 	if err != nil {
-		inv.Errors = append(inv.Errors, "config.json rejected, keeping previous: "+err.Error())
+		inv.Errors = append(inv.Errors, "config.pb rejected, keeping previous: "+err.Error())
 		return s.config
 	}
 	s.config = c
 	return c
+}
+
+// ReadConfig returns the stored config.pb, empty when there is none yet.
+func (s *Source) ReadConfig() (*configv1.Config, error) {
+	data, err := fs.ReadFile(s.fsys, configFile)
+	if errors.Is(err, fs.ErrNotExist) {
+		return &configv1.Config{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return domain.DecodeConfig(data, false)
+}
+
+// WriteConfig replaces config.pb atomically; the watcher picks it up.
+func (s *Source) WriteConfig(pb *configv1.Config) error {
+	data, err := domain.EncodeConfig(pb)
+	if err != nil {
+		return err
+	}
+	root, err := os.OpenRoot(s.dir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	if err := root.WriteFile("."+configFile+".part", data, 0o600); err != nil {
+		return err
+	}
+	return root.Rename("."+configFile+".part", configFile)
 }
 
 // versions lists <versions>/<name>.zip files; anything else is ignored.

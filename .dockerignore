@@ -3,3 +3,6 @@
 !go.sum
 !cmd/
 !internal/
+!frontend/
+frontend/node_modules
+frontend/.svelte-kit

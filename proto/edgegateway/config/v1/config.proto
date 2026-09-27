@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package edgegateway.config.v1;
+
+import "google/protobuf/struct.proto";
+
+option go_package = "github.com/zenkiet/edge-gateway/internal/gen/configv1;configv1";
+
+// Config is the gateway's selection config, stored as config.pb: rules are
+// checked top to bottom, then the backend table, then the default bundle.
+message Config {
+  string schema = 1 [json_name = "$schema"];
+  Source source = 2;
+  // Date layout for backend keys, comparisons and posted facts; MM.dd.YYYY by default.
+  string date_format = 3;
+  // Bundle for visitors without a cookie and when nothing matches.
+  string default_bundle = 4 [json_name = "default"];
+  // Oldest backend version each bundle supports: "<backend>": "<bundle>".
+  map<string, string> backend = 5;
+  repeated Rule rules = 6;
+}
+
+// Source is where versions/*.zip come from; unset means the local directory.
+message Source {
+  // "local" or "s3".
+  string type = 1;
+  string bucket = 2;
+  // Folder in the bucket holding the zips, e.g. prod/.
+  string prefix = 3;
+  // https://<ACCOUNT_ID>.r2.cloudflarestorage.com for R2; empty for AWS.
+  string endpoint = 4;
+  // auto for R2.
+  string region = 5;
+  // Leave both keys empty to use the AWS credential chain.
+  string access_key_id = 6;
+  string secret_access_key = 7;
+  // How often the bucket is listed, a Go duration such as 30s.
+  string poll = 8;
+}
+
+message Rule {
+  string id = 1;
+  // Free text for operators, ignored by the gateway.
+  string note = 2;
+  // Every entry must match: {"fact": value} with a string, number, boolean or
+  // a list of them; "*", "N%" and "<", "<=", ">", ">=" comparisons are matchers.
+  google.protobuf.Struct when = 3;
+  string bundle = 4;
+  // Expiry: YYYY-MM-DD (through the end of that UTC day) or an RFC 3339 time.
+  string until = 5;
+}

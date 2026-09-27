@@ -7,20 +7,25 @@ import (
 	"runtime/debug"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/zenkiet/edge-gateway/internal/domain"
+	"github.com/zenkiet/edge-gateway/internal/gen/configv1"
 )
 
 type Source interface {
 	Stamp() uint64
 	Load() (domain.Inventory, error)
+	ReadConfig() (*configv1.Config, error)
+	WriteConfig(*configv1.Config) error
 }
 
 type Catalog struct {
 	src     Source
 	log     *slog.Logger
+	mu      sync.Mutex
 	seen    atomic.Uint64
 	retry   atomic.Bool
 	reloads atomic.Uint64
@@ -42,7 +47,20 @@ func (c *Catalog) Stats() (reloads uint64, lastErr string) {
 	return c.reloads.Load(), lastErr
 }
 
+// Config is the stored config.pb, as the admin API edits it.
+func (c *Catalog) Config() (*configv1.Config, error) { return c.src.ReadConfig() }
+
+// SaveConfig writes config.pb and reloads, so the caller sees the outcome.
+func (c *Catalog) SaveConfig(pb *configv1.Config) error {
+	if err := c.src.WriteConfig(pb); err != nil {
+		return err
+	}
+	return c.Reload()
+}
+
 func (c *Catalog) Reload() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	err := c.reload()
 	if err == nil {
 		c.reloads.Add(1)
@@ -56,7 +74,6 @@ func (c *Catalog) Reload() error {
 
 // reload records the stamp before loading, so a change landing mid-load
 // differs from it and triggers the next reload.
-// ponytail: not safe for concurrent calls; main (before Watch) and Watch are the only callers, add a mutex if a reload endpoint appears.
 func (c *Catalog) reload() error {
 	start := time.Now()
 	c.seen.Store(c.src.Stamp())
