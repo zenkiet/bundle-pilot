@@ -3,7 +3,7 @@
 	import { resolve } from '$app/paths';
 	import { create } from '@bufbuild/protobuf';
 	import { Check, ChevronRight, CircleCheck, Eye, EyeOff } from '@lucide/svelte';
-	import { AuthSchema } from '$lib/entities/config/gen/edgegateway/config/v1/config_pb';
+	import { AuthSchema } from '$lib/entities/config/gen/bundlepilot/config/v1/config_pb';
 	import { config } from '$lib/entities/config/store.svelte';
 	import { status } from '$lib/entities/status/store.svelte';
 	import AppearanceSelector from '$lib/features/toggle-theme/AppearanceSelector.svelte';
@@ -56,7 +56,7 @@
 <div class="flex min-h-dvh flex-col">
 	<header class="flex min-h-12 items-center gap-4 border-b border-line px-4 py-2 md:px-6">
 		<div class="flex flex-col">
-			<span class="large">Edge gateway</span><span class="sup"
+			<span class="large">Bundle Pilot</span><span class="sup"
 				>First-run setup · config.pb not found</span
 			>
 		</div>

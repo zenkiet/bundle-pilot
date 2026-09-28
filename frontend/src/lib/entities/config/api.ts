@@ -1,6 +1,6 @@
 import { create, fromBinary, toBinary } from '@bufbuild/protobuf';
 import { request } from '$lib/shared/lib/api';
-import { ConfigSchema, type Config } from './gen/edgegateway/config/v1/config_pb';
+import { ConfigSchema, type Config } from './gen/bundlepilot/config/v1/config_pb';
 
 const url = '/__gateway/config';
 const protobuf = 'application/x-protobuf';

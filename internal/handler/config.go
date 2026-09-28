@@ -9,7 +9,7 @@ import (
 
 	"google.golang.org/protobuf/encoding/protojson"
 
-	"github.com/zenkiet/edge-gateway/internal/domain"
+	"github.com/zenkiet/bundle-pilot/internal/domain"
 )
 
 const (

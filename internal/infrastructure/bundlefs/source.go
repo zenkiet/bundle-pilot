@@ -18,11 +18,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/zenkiet/edge-gateway/internal/domain"
-	"github.com/zenkiet/edge-gateway/internal/gen/configv1"
-	"github.com/zenkiet/edge-gateway/internal/infrastructure/mirror"
-	"github.com/zenkiet/edge-gateway/internal/infrastructure/mirror/s3"
-	"github.com/zenkiet/edge-gateway/internal/pkg/asset"
+	"github.com/zenkiet/bundle-pilot/internal/domain"
+	"github.com/zenkiet/bundle-pilot/internal/gen/configv1"
+	"github.com/zenkiet/bundle-pilot/internal/infrastructure/mirror"
+	"github.com/zenkiet/bundle-pilot/internal/infrastructure/mirror/s3"
+	"github.com/zenkiet/bundle-pilot/internal/pkg/asset"
 )
 
 const (

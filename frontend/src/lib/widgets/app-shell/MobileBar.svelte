@@ -7,7 +7,7 @@
 	import { status } from '$lib/entities/status/store.svelte';
 
 	let { onsearch }: { onsearch: () => void } = $props();
-	const title = $derived(status.value?.project_name || 'Edge gateway');
+	const title = $derived(status.value?.project_name || 'Bundle Pilot');
 	let open = $state(false);
 </script>
 

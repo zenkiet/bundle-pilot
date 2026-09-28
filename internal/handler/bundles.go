@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zenkiet/edge-gateway/internal/pkg/version"
+	"github.com/zenkiet/bundle-pilot/internal/pkg/version"
 )
 
 const maxZip = 256 << 20

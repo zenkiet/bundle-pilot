@@ -4,7 +4,7 @@ import (
 	"crypto/subtle"
 	"net/http"
 
-	"github.com/zenkiet/edge-gateway/internal/domain"
+	"github.com/zenkiet/bundle-pilot/internal/domain"
 )
 
 type session struct{ hash, header string }

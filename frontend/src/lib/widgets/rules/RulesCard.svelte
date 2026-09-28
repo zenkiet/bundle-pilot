@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { ArrowDown, ArrowUp, Copy, Pencil, Plus, Trash2 } from '@lucide/svelte';
 	import { clone } from '@bufbuild/protobuf';
-	import { RuleSchema, type Rule } from '$lib/entities/config/gen/edgegateway/config/v1/config_pb';
+	import { RuleSchema, type Rule } from '$lib/entities/config/gen/bundlepilot/config/v1/config_pb';
 	import { config } from '$lib/entities/config/store.svelte';
 	import { status } from '$lib/entities/status/store.svelte';
 	import { toRows } from '$lib/entities/config/when';

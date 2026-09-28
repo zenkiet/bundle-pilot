@@ -3,7 +3,7 @@ import {
 	RuleSchema,
 	SourceSchema,
 	type Config
-} from '$lib/entities/config/gen/edgegateway/config/v1/config_pb';
+} from '$lib/entities/config/gen/bundlepilot/config/v1/config_pb';
 
 export interface Change {
 	what: string;
@@ -22,7 +22,7 @@ export function diff(a: Config, b: Config): Change[] {
 	if (a.projectName !== b.projectName || a.environment !== b.environment)
 		out.push({
 			what: 'Project',
-			diff: `${b.projectName || 'Edge gateway'}${b.environment ? ` · ${b.environment}` : ''}`,
+			diff: `${b.projectName || 'Bundle Pilot'}${b.environment ? ` · ${b.environment}` : ''}`,
 			kind: 'changed'
 		});
 	if (b.auth?.password)
@@ -66,8 +66,8 @@ export function diff(a: Config, b: Config): Change[] {
 	if (
 		!equals(
 			SourceSchema,
-			a.source ?? ({ $typeName: 'edgegateway.config.v1.Source' } as never),
-			b.source ?? ({ $typeName: 'edgegateway.config.v1.Source' } as never)
+			a.source ?? ({ $typeName: 'bundlepilot.config.v1.Source' } as never),
+			b.source ?? ({ $typeName: 'bundlepilot.config.v1.Source' } as never)
 		)
 	)
 		out.push({

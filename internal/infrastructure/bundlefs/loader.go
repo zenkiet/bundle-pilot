@@ -22,8 +22,8 @@ import (
 	"golang.org/x/net/html"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/zenkiet/edge-gateway/internal/domain"
-	"github.com/zenkiet/edge-gateway/internal/pkg/asset"
+	"github.com/zenkiet/bundle-pilot/internal/domain"
+	"github.com/zenkiet/bundle-pilot/internal/pkg/asset"
 )
 
 var (

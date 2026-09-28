@@ -37,3 +37,5 @@ dist/
 # admin UI build output, embedded by internal/ui
 internal/ui/build/*
 !internal/ui/build/.gitkeep
+node_modules/
+release/

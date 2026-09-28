@@ -1,7 +1,7 @@
 import { clone, equals } from '@bufbuild/protobuf';
 import { session } from '$lib/shared/lib/session.svelte';
 import { emptyConfig, loadConfig, saveConfig, type SaveResult } from './api';
-import { ConfigSchema, type Config } from './gen/edgegateway/config/v1/config_pb';
+import { ConfigSchema, type Config } from './gen/bundlepilot/config/v1/config_pb';
 
 class ConfigStore {
 	saved = $state<Config>(emptyConfig());

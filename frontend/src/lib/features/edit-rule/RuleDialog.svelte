@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { create } from '@bufbuild/protobuf';
 	import { Plus, X } from '@lucide/svelte';
-	import { RuleSchema, type Rule } from '$lib/entities/config/gen/edgegateway/config/v1/config_pb';
+	import { RuleSchema, type Rule } from '$lib/entities/config/gen/bundlepilot/config/v1/config_pb';
 	import { fromRows, toRows, type WhenRow } from '$lib/entities/config/when';
 	import Banner from '$lib/shared/ui/Banner.svelte';
 	import Dialog from '$lib/shared/ui/Dialog.svelte';

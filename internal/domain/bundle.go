@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zenkiet/edge-gateway/internal/pkg/asset"
-	"github.com/zenkiet/edge-gateway/internal/pkg/version"
+	"github.com/zenkiet/bundle-pilot/internal/pkg/asset"
+	"github.com/zenkiet/bundle-pilot/internal/pkg/version"
 )
 
 var ErrNoIndex = errors.New("index.html missing")
@@ -152,7 +152,7 @@ func (s *Snapshot) pickDefault(config string) {
 	}
 	switch {
 	case config == "":
-		s.Issues = append(s.Issues, "config.json sets no default: the newest bundle serves every visitor without a cookie")
+		s.Issues = append(s.Issues, "config.pb sets no default: the newest bundle serves every visitor without a cookie")
 	case s.DefaultFrom != "config":
 		s.Issues = append(s.Issues, fmt.Sprintf("config default %s not on disk, using %s", config, s.Default.Version))
 	}

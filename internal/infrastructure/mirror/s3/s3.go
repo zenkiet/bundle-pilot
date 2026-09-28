@@ -16,8 +16,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go/logging"
 
-	"github.com/zenkiet/edge-gateway/internal/domain"
-	"github.com/zenkiet/edge-gateway/internal/infrastructure/mirror"
+	"github.com/zenkiet/bundle-pilot/internal/domain"
+	"github.com/zenkiet/bundle-pilot/internal/infrastructure/mirror"
 )
 
 type Store struct {

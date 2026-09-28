@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zenkiet/edge-gateway/internal/pkg/version"
+	"github.com/zenkiet/bundle-pilot/internal/pkg/version"
 )
 
 // Step serves Bundle to backends at or above Backend.

@@ -27,7 +27,7 @@
 			<img src={logo} alt="" class="size-10 flex-none" />
 			<div class="min-w-0">
 				<div class="large truncate">
-					{s?.project_name || 'Edge gateway'}{#if s?.environment}<span
+					{s?.project_name || 'Bundle Pilot'}{#if s?.environment}<span
 							class="badge ml-2 align-middle">{s.environment}</span
 						>{/if}
 				</div>

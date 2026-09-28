@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.12
 // 	protoc        (unknown)
-// source: edgegateway/config/v1/config.proto
+// source: bundlepilot/config/v1/config.proto
 
 package configv1
 
@@ -46,7 +46,7 @@ type Config struct {
 
 func (x *Config) Reset() {
 	*x = Config{}
-	mi := &file_edgegateway_config_v1_config_proto_msgTypes[0]
+	mi := &file_bundlepilot_config_v1_config_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -58,7 +58,7 @@ func (x *Config) String() string {
 func (*Config) ProtoMessage() {}
 
 func (x *Config) ProtoReflect() protoreflect.Message {
-	mi := &file_edgegateway_config_v1_config_proto_msgTypes[0]
+	mi := &file_bundlepilot_config_v1_config_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -71,7 +71,7 @@ func (x *Config) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Config.ProtoReflect.Descriptor instead.
 func (*Config) Descriptor() ([]byte, []int) {
-	return file_edgegateway_config_v1_config_proto_rawDescGZIP(), []int{0}
+	return file_bundlepilot_config_v1_config_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *Config) GetSchema() string {
@@ -151,7 +151,7 @@ type Auth struct {
 
 func (x *Auth) Reset() {
 	*x = Auth{}
-	mi := &file_edgegateway_config_v1_config_proto_msgTypes[1]
+	mi := &file_bundlepilot_config_v1_config_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -163,7 +163,7 @@ func (x *Auth) String() string {
 func (*Auth) ProtoMessage() {}
 
 func (x *Auth) ProtoReflect() protoreflect.Message {
-	mi := &file_edgegateway_config_v1_config_proto_msgTypes[1]
+	mi := &file_bundlepilot_config_v1_config_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -176,7 +176,7 @@ func (x *Auth) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Auth.ProtoReflect.Descriptor instead.
 func (*Auth) Descriptor() ([]byte, []int) {
-	return file_edgegateway_config_v1_config_proto_rawDescGZIP(), []int{1}
+	return file_bundlepilot_config_v1_config_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *Auth) GetUsername() string {
@@ -223,7 +223,7 @@ type Source struct {
 
 func (x *Source) Reset() {
 	*x = Source{}
-	mi := &file_edgegateway_config_v1_config_proto_msgTypes[2]
+	mi := &file_bundlepilot_config_v1_config_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -235,7 +235,7 @@ func (x *Source) String() string {
 func (*Source) ProtoMessage() {}
 
 func (x *Source) ProtoReflect() protoreflect.Message {
-	mi := &file_edgegateway_config_v1_config_proto_msgTypes[2]
+	mi := &file_bundlepilot_config_v1_config_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -248,7 +248,7 @@ func (x *Source) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Source.ProtoReflect.Descriptor instead.
 func (*Source) Descriptor() ([]byte, []int) {
-	return file_edgegateway_config_v1_config_proto_rawDescGZIP(), []int{2}
+	return file_bundlepilot_config_v1_config_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *Source) GetType() string {
@@ -324,7 +324,7 @@ type Rule struct {
 
 func (x *Rule) Reset() {
 	*x = Rule{}
-	mi := &file_edgegateway_config_v1_config_proto_msgTypes[3]
+	mi := &file_bundlepilot_config_v1_config_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -336,7 +336,7 @@ func (x *Rule) String() string {
 func (*Rule) ProtoMessage() {}
 
 func (x *Rule) ProtoReflect() protoreflect.Message {
-	mi := &file_edgegateway_config_v1_config_proto_msgTypes[3]
+	mi := &file_bundlepilot_config_v1_config_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -349,7 +349,7 @@ func (x *Rule) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Rule.ProtoReflect.Descriptor instead.
 func (*Rule) Descriptor() ([]byte, []int) {
-	return file_edgegateway_config_v1_config_proto_rawDescGZIP(), []int{3}
+	return file_bundlepilot_config_v1_config_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *Rule) GetId() string {
@@ -387,20 +387,20 @@ func (x *Rule) GetUntil() string {
 	return ""
 }
 
-var File_edgegateway_config_v1_config_proto protoreflect.FileDescriptor
+var File_bundlepilot_config_v1_config_proto protoreflect.FileDescriptor
 
-const file_edgegateway_config_v1_config_proto_rawDesc = "" +
+const file_bundlepilot_config_v1_config_proto_rawDesc = "" +
 	"\n" +
-	"\"edgegateway/config/v1/config.proto\x12\x15edgegateway.config.v1\x1a\x1cgoogle/protobuf/struct.proto\"\xc5\x03\n" +
+	"\"bundlepilot/config/v1/config.proto\x12\x15bundlepilot.config.v1\x1a\x1cgoogle/protobuf/struct.proto\"\xc5\x03\n" +
 	"\x06Config\x12\x17\n" +
 	"\x06schema\x18\x01 \x01(\tR\a$schema\x125\n" +
-	"\x06source\x18\x02 \x01(\v2\x1d.edgegateway.config.v1.SourceR\x06source\x12\x1f\n" +
+	"\x06source\x18\x02 \x01(\v2\x1d.bundlepilot.config.v1.SourceR\x06source\x12\x1f\n" +
 	"\vdate_format\x18\x03 \x01(\tR\n" +
 	"dateFormat\x12\x1f\n" +
 	"\x0edefault_bundle\x18\x04 \x01(\tR\adefault\x12D\n" +
-	"\abackend\x18\x05 \x03(\v2*.edgegateway.config.v1.Config.BackendEntryR\abackend\x121\n" +
-	"\x05rules\x18\x06 \x03(\v2\x1b.edgegateway.config.v1.RuleR\x05rules\x12/\n" +
-	"\x04auth\x18\a \x01(\v2\x1b.edgegateway.config.v1.AuthR\x04auth\x12!\n" +
+	"\abackend\x18\x05 \x03(\v2*.bundlepilot.config.v1.Config.BackendEntryR\abackend\x121\n" +
+	"\x05rules\x18\x06 \x03(\v2\x1b.bundlepilot.config.v1.RuleR\x05rules\x12/\n" +
+	"\x04auth\x18\a \x01(\v2\x1b.bundlepilot.config.v1.AuthR\x04auth\x12!\n" +
 	"\fproject_name\x18\b \x01(\tR\vprojectName\x12 \n" +
 	"\venvironment\x18\t \x01(\tR\venvironment\x1a:\n" +
 	"\fBackendEntry\x12\x10\n" +
@@ -424,35 +424,35 @@ const file_edgegateway_config_v1_config_proto_rawDesc = "" +
 	"\x04note\x18\x02 \x01(\tR\x04note\x12+\n" +
 	"\x04when\x18\x03 \x01(\v2\x17.google.protobuf.StructR\x04when\x12\x16\n" +
 	"\x06bundle\x18\x04 \x01(\tR\x06bundle\x12\x14\n" +
-	"\x05until\x18\x05 \x01(\tR\x05untilB@Z>github.com/zenkiet/edge-gateway/internal/gen/configv1;configv1b\x06proto3"
+	"\x05until\x18\x05 \x01(\tR\x05untilB@Z>github.com/zenkiet/bundle-pilot/internal/gen/configv1;configv1b\x06proto3"
 
 var (
-	file_edgegateway_config_v1_config_proto_rawDescOnce sync.Once
-	file_edgegateway_config_v1_config_proto_rawDescData []byte
+	file_bundlepilot_config_v1_config_proto_rawDescOnce sync.Once
+	file_bundlepilot_config_v1_config_proto_rawDescData []byte
 )
 
-func file_edgegateway_config_v1_config_proto_rawDescGZIP() []byte {
-	file_edgegateway_config_v1_config_proto_rawDescOnce.Do(func() {
-		file_edgegateway_config_v1_config_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_edgegateway_config_v1_config_proto_rawDesc), len(file_edgegateway_config_v1_config_proto_rawDesc)))
+func file_bundlepilot_config_v1_config_proto_rawDescGZIP() []byte {
+	file_bundlepilot_config_v1_config_proto_rawDescOnce.Do(func() {
+		file_bundlepilot_config_v1_config_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_bundlepilot_config_v1_config_proto_rawDesc), len(file_bundlepilot_config_v1_config_proto_rawDesc)))
 	})
-	return file_edgegateway_config_v1_config_proto_rawDescData
+	return file_bundlepilot_config_v1_config_proto_rawDescData
 }
 
-var file_edgegateway_config_v1_config_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
-var file_edgegateway_config_v1_config_proto_goTypes = []any{
-	(*Config)(nil),          // 0: edgegateway.config.v1.Config
-	(*Auth)(nil),            // 1: edgegateway.config.v1.Auth
-	(*Source)(nil),          // 2: edgegateway.config.v1.Source
-	(*Rule)(nil),            // 3: edgegateway.config.v1.Rule
-	nil,                     // 4: edgegateway.config.v1.Config.BackendEntry
+var file_bundlepilot_config_v1_config_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_bundlepilot_config_v1_config_proto_goTypes = []any{
+	(*Config)(nil),          // 0: bundlepilot.config.v1.Config
+	(*Auth)(nil),            // 1: bundlepilot.config.v1.Auth
+	(*Source)(nil),          // 2: bundlepilot.config.v1.Source
+	(*Rule)(nil),            // 3: bundlepilot.config.v1.Rule
+	nil,                     // 4: bundlepilot.config.v1.Config.BackendEntry
 	(*structpb.Struct)(nil), // 5: google.protobuf.Struct
 }
-var file_edgegateway_config_v1_config_proto_depIdxs = []int32{
-	2, // 0: edgegateway.config.v1.Config.source:type_name -> edgegateway.config.v1.Source
-	4, // 1: edgegateway.config.v1.Config.backend:type_name -> edgegateway.config.v1.Config.BackendEntry
-	3, // 2: edgegateway.config.v1.Config.rules:type_name -> edgegateway.config.v1.Rule
-	1, // 3: edgegateway.config.v1.Config.auth:type_name -> edgegateway.config.v1.Auth
-	5, // 4: edgegateway.config.v1.Rule.when:type_name -> google.protobuf.Struct
+var file_bundlepilot_config_v1_config_proto_depIdxs = []int32{
+	2, // 0: bundlepilot.config.v1.Config.source:type_name -> bundlepilot.config.v1.Source
+	4, // 1: bundlepilot.config.v1.Config.backend:type_name -> bundlepilot.config.v1.Config.BackendEntry
+	3, // 2: bundlepilot.config.v1.Config.rules:type_name -> bundlepilot.config.v1.Rule
+	1, // 3: bundlepilot.config.v1.Config.auth:type_name -> bundlepilot.config.v1.Auth
+	5, // 4: bundlepilot.config.v1.Rule.when:type_name -> google.protobuf.Struct
 	5, // [5:5] is the sub-list for method output_type
 	5, // [5:5] is the sub-list for method input_type
 	5, // [5:5] is the sub-list for extension type_name
@@ -460,26 +460,26 @@ var file_edgegateway_config_v1_config_proto_depIdxs = []int32{
 	0, // [0:5] is the sub-list for field type_name
 }
 
-func init() { file_edgegateway_config_v1_config_proto_init() }
-func file_edgegateway_config_v1_config_proto_init() {
-	if File_edgegateway_config_v1_config_proto != nil {
+func init() { file_bundlepilot_config_v1_config_proto_init() }
+func file_bundlepilot_config_v1_config_proto_init() {
+	if File_bundlepilot_config_v1_config_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_edgegateway_config_v1_config_proto_rawDesc), len(file_edgegateway_config_v1_config_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_bundlepilot_config_v1_config_proto_rawDesc), len(file_bundlepilot_config_v1_config_proto_rawDesc)),
 			NumEnums:      0,
 			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
-		GoTypes:           file_edgegateway_config_v1_config_proto_goTypes,
-		DependencyIndexes: file_edgegateway_config_v1_config_proto_depIdxs,
-		MessageInfos:      file_edgegateway_config_v1_config_proto_msgTypes,
+		GoTypes:           file_bundlepilot_config_v1_config_proto_goTypes,
+		DependencyIndexes: file_bundlepilot_config_v1_config_proto_depIdxs,
+		MessageInfos:      file_bundlepilot_config_v1_config_proto_msgTypes,
 	}.Build()
-	File_edgegateway_config_v1_config_proto = out.File
-	file_edgegateway_config_v1_config_proto_goTypes = nil
-	file_edgegateway_config_v1_config_proto_depIdxs = nil
+	File_bundlepilot_config_v1_config_proto = out.File
+	file_bundlepilot_config_v1_config_proto_goTypes = nil
+	file_bundlepilot_config_v1_config_proto_depIdxs = nil
 }

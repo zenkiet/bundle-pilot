@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zenkiet/edge-gateway/internal/domain"
-	"github.com/zenkiet/edge-gateway/internal/pkg/asset"
+	"github.com/zenkiet/bundle-pilot/internal/domain"
+	"github.com/zenkiet/bundle-pilot/internal/pkg/asset"
 )
 
 // Large files get a write deadline scaled to their size, so slow clients can
@@ -46,7 +46,7 @@ func (rt *Router) static(w http.ResponseWriter, r *http.Request, snap *domain.Sn
 	}
 }
 
-// serveIndex stamps <meta name="edge-gateway:bundle"> into <head>, so the app
+// serveIndex stamps <meta name="bundle-pilot:bundle"> into <head>, so the app
 // learns the version it runs as without a build-time copy of the zip name.
 func serveIndex(w http.ResponseWriter, r *http.Request, a *asset.Asset, version string) {
 	body := a.Body()
@@ -63,7 +63,7 @@ func serveIndex(w http.ResponseWriter, r *http.Request, a *asset.Asset, version 
 		return
 	}
 	etag := strings.TrimSuffix(a.ETag(), `"`) + "-" + version + `"`
-	a.ServeParts(w, r, etag, append(body[:i:i], `<meta name="edge-gateway:bundle" content="`+version+`">`...), body[i:])
+	a.ServeParts(w, r, etag, append(body[:i:i], `<meta name="bundle-pilot:bundle" content="`+version+`">`...), body[i:])
 }
 
 func serveManifest(w http.ResponseWriter, r *http.Request, a *asset.Asset) {

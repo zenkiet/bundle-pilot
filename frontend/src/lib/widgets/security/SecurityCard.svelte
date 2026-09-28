@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { create } from '@bufbuild/protobuf';
-	import { AuthSchema } from '$lib/entities/config/gen/edgegateway/config/v1/config_pb';
+	import { AuthSchema } from '$lib/entities/config/gen/bundlepilot/config/v1/config_pb';
 	import { config } from '$lib/entities/config/store.svelte';
 	import Card from '$lib/shared/ui/Card.svelte';
 

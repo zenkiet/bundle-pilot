@@ -1,10 +1,10 @@
 syntax = "proto3";
 
-package edgegateway.config.v1;
+package bundlepilot.config.v1;
 
 import "google/protobuf/struct.proto";
 
-option go_package = "github.com/zenkiet/edge-gateway/internal/gen/configv1;configv1";
+option go_package = "github.com/zenkiet/bundle-pilot/internal/gen/configv1;configv1";
 
 // Config is the gateway's selection config, stored as config.pb: rules are
 // checked top to bottom, then the backend table, then the default bundle.

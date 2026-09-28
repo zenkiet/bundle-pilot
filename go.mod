@@ -1,4 +1,4 @@
-module github.com/zenkiet/edge-gateway
+module github.com/zenkiet/bundle-pilot
 
 go 1.27.1
 

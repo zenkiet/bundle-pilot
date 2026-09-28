@@ -1,11 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" role="img" aria-label="Bundle Pilot: Go gopher in an aviator cap on a round badge with gold wings and a package">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" role="img" aria-label="Bundle Pilot: Go gopher in an aviator cap on a round badge with gold wings">
 <defs>
 <symbol id="gopher" viewBox="0 0 120 130" overflow="visible">
 <circle cx="8" cy="40" r="12" fill="#5dc9e2" stroke="#0f2a3a" stroke-width="5"/>
 <circle cx="8" cy="40" r="4.5" fill="#0f2a3a"/>
 <circle cx="112" cy="40" r="12" fill="#5dc9e2" stroke="#0f2a3a" stroke-width="5"/>
 <circle cx="112" cy="40" r="4.5" fill="#0f2a3a"/>
-<path d="M60 16 C98 16 114 40 114 72 L114 152 L6 152 L6 72 C6 40 22 16 60 16 Z" fill="#5dc9e2" stroke="#0f2a3a" stroke-width="5" stroke-linejoin="round"/>
+<path d="M60 16 C98 16 114 40 114 72 L114 140 L6 140 L6 72 C6 40 22 16 60 16 Z" fill="#5dc9e2" stroke="#0f2a3a" stroke-width="5" stroke-linejoin="round"/>
 <path d="M6 68 C6 2 114 2 114 68 L114 76 C98 64 78 62 60 62 C42 62 22 64 6 76 Z" fill="#8b5a2b" stroke="#0f2a3a" stroke-width="5" stroke-linejoin="round"/>
 <path d="M52 44 L68 44" stroke="#0f2a3a" stroke-width="5" stroke-linecap="round"/>
 <circle cx="40" cy="44" r="12" fill="#ffe27a" stroke="#0f2a3a" stroke-width="5"/>
@@ -23,7 +23,7 @@
 <path d="M10 130 Q60 146 110 130 L114 142 Q60 162 6 142 Z" fill="#e5533d" stroke="#0f2a3a" stroke-width="5" stroke-linejoin="round"/>
 </symbol>
 <clipPath id="badgeC"><circle cx="200" cy="200" r="192"/></clipPath>
-<clipPath id="chestC"><rect x="0" y="0" width="400" height="306"/></clipPath>
+<clipPath id="chestC"><rect x="0" y="0" width="400" height="320"/></clipPath>
 </defs>
 <circle cx="200" cy="200" r="192" fill="#0f2a3a"/>
 <circle cx="200" cy="200" r="172" fill="none" stroke="#f5b400" stroke-width="10"/>
@@ -34,7 +34,4 @@
 <path d="M250 234 C282 234 310 250 334 288 C302 270 280 268 258 268 Z"/>
 </g>
 <g clip-path="url(#badgeC)"><g clip-path="url(#chestC)"><use href="#gopher" x="104" y="68" width="192" height="208"/></g></g>
-<path d="M184 306 L178 312 M216 306 L222 312" stroke="#f5b400" stroke-width="5" stroke-linecap="round"/>
-<rect x="166" y="312" width="68" height="52" rx="8" fill="#d9a066" stroke="#f5b400" stroke-width="5"/>
-<rect x="193" y="314" width="14" height="48" fill="#b87333"/>
 </svg>

@@ -12,12 +12,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/zenkiet/edge-gateway/internal/config"
-	"github.com/zenkiet/edge-gateway/internal/domain"
-	"github.com/zenkiet/edge-gateway/internal/handler"
-	"github.com/zenkiet/edge-gateway/internal/infrastructure/bundlefs"
-	"github.com/zenkiet/edge-gateway/internal/ui"
-	"github.com/zenkiet/edge-gateway/internal/usecase"
+	"github.com/zenkiet/bundle-pilot/internal/config"
+	"github.com/zenkiet/bundle-pilot/internal/domain"
+	"github.com/zenkiet/bundle-pilot/internal/handler"
+	"github.com/zenkiet/bundle-pilot/internal/infrastructure/bundlefs"
+	"github.com/zenkiet/bundle-pilot/internal/ui"
+	"github.com/zenkiet/bundle-pilot/internal/usecase"
 )
 
 func main() {

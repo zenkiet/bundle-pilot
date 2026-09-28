@@ -33,7 +33,7 @@
 	<form class="card w-full max-w-100 gap-4 p-5 md:p-6" onsubmit={signIn}>
 		<div class="flex flex-col">
 			<h1 class="text-xl leading-7 font-semibold">Sign in</h1>
-			<span class="sup">{status.value?.project_name || 'Edge gateway'} · admin</span>
+			<span class="sup">{status.value?.project_name || 'Bundle Pilot'} · admin</span>
 		</div>
 		{#if failed}<Banner status="error" title="Wrong username or password" />{/if}
 		<label class="field"

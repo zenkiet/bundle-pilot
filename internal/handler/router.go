@@ -8,7 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/zenkiet/edge-gateway/internal/usecase"
+	"github.com/zenkiet/bundle-pilot/internal/usecase"
 )
 
 type Router struct {

@@ -6,7 +6,7 @@
 	import { page } from '$app/state';
 	import { ListChecks, Package, RefreshCw, Save, SunMoon, Undo2, Upload } from '@lucide/svelte';
 	import { reloadGateway } from '$lib/entities/bundle/api';
-	import { ConfigSchema } from '$lib/entities/config/gen/edgegateway/config/v1/config_pb';
+	import { ConfigSchema } from '$lib/entities/config/gen/bundlepilot/config/v1/config_pb';
 	import { config } from '$lib/entities/config/store.svelte';
 	import { status } from '$lib/entities/status/store.svelte';
 	import CommandPalette, {
@@ -126,7 +126,7 @@
 </script>
 
 <svelte:head
-	><link rel="icon" href={favicon} /><title>{status.value?.project_name || 'Edge gateway'}</title
+	><link rel="icon" href={favicon} /><title>{status.value?.project_name || 'Bundle Pilot'}</title
 	></svelte:head
 >
 <svelte:window onkeydown={key} />

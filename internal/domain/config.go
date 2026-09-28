@@ -15,11 +15,11 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/zenkiet/edge-gateway/internal/gen/configv1"
-	"github.com/zenkiet/edge-gateway/internal/pkg/version"
+	"github.com/zenkiet/bundle-pilot/internal/gen/configv1"
+	"github.com/zenkiet/bundle-pilot/internal/pkg/version"
 )
 
-var ErrBackendKind = errors.New("backend must have the same shape as the config.json backend keys")
+var ErrBackendKind = errors.New("backend must have the same shape as the backend table keys")
 
 const (
 	maxFacts   = 32

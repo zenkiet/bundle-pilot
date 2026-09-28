@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { create } from '@bufbuild/protobuf';
-	import { SourceSchema } from '$lib/entities/config/gen/edgegateway/config/v1/config_pb';
+	import { SourceSchema } from '$lib/entities/config/gen/bundlepilot/config/v1/config_pb';
 	import { config } from '$lib/entities/config/store.svelte';
 	import { status } from '$lib/entities/status/store.svelte';
 	import { ago } from '$lib/shared/lib/api';

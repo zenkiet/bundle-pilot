@@ -9,7 +9,7 @@ import (
 	"runtime/debug"
 	"time"
 
-	"github.com/zenkiet/edge-gateway/internal/domain"
+	"github.com/zenkiet/bundle-pilot/internal/domain"
 )
 
 const maxFactsBody = 4 << 10

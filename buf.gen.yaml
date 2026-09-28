@@ -2,7 +2,7 @@ version: v2
 plugins:
   - local: protoc-gen-go
     out: .
-    opt: module=github.com/zenkiet/edge-gateway
+    opt: module=github.com/zenkiet/bundle-pilot
   - local: frontend/node_modules/.bin/protoc-gen-es
     out: frontend/src/lib/entities/config/gen
     opt: target=ts
