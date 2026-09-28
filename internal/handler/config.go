@@ -29,6 +29,9 @@ func (rt *Router) getConfig(w http.ResponseWriter, r *http.Request) {
 	if pb.Source != nil && pb.Source.SecretAccessKey != "" {
 		pb.Source.SecretAccessKey = maskedSecret
 	}
+	if pb.Auth != nil && pb.Auth.PasswordHash != "" {
+		pb.Auth.PasswordHash = maskedSecret
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	if strings.Contains(r.Header.Get("Accept"), protobufType) {
 		b, _ := domain.EncodeConfig(pb)
@@ -56,10 +59,12 @@ func (rt *Router) putConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if pb.Source != nil && pb.Source.SecretAccessKey == maskedSecret {
-		if cur, err := rt.cat.Config(); err == nil && cur.Source != nil {
-			pb.Source.SecretAccessKey = cur.Source.SecretAccessKey
-		}
+	cur, _ := rt.cat.Config()
+	if pb.Source != nil && pb.Source.SecretAccessKey == maskedSecret && cur != nil && cur.Source != nil {
+		pb.Source.SecretAccessKey = cur.Source.SecretAccessKey
+	}
+	if pb.Auth != nil && pb.Auth.PasswordHash == maskedSecret && cur != nil && cur.Auth != nil {
+		pb.Auth.PasswordHash = cur.Auth.PasswordHash
 	}
 	out := struct {
 		Saved  bool     `json:"saved"`

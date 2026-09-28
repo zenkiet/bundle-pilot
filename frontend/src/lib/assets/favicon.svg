@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" role="img" aria-label="Bundle Pilot: Go gopher in an aviator cap on a round badge with gold wings and a package">
+<defs>
+<symbol id="gopher" viewBox="0 0 120 130" overflow="visible">
+<circle cx="8" cy="40" r="12" fill="#5dc9e2" stroke="#0f2a3a" stroke-width="5"/>
+<circle cx="8" cy="40" r="4.5" fill="#0f2a3a"/>
+<circle cx="112" cy="40" r="12" fill="#5dc9e2" stroke="#0f2a3a" stroke-width="5"/>
+<circle cx="112" cy="40" r="4.5" fill="#0f2a3a"/>
+<path d="M60 16 C98 16 114 40 114 72 L114 152 L6 152 L6 72 C6 40 22 16 60 16 Z" fill="#5dc9e2" stroke="#0f2a3a" stroke-width="5" stroke-linejoin="round"/>
+<path d="M6 68 C6 2 114 2 114 68 L114 76 C98 64 78 62 60 62 C42 62 22 64 6 76 Z" fill="#8b5a2b" stroke="#0f2a3a" stroke-width="5" stroke-linejoin="round"/>
+<path d="M52 44 L68 44" stroke="#0f2a3a" stroke-width="5" stroke-linecap="round"/>
+<circle cx="40" cy="44" r="12" fill="#ffe27a" stroke="#0f2a3a" stroke-width="5"/>
+<circle cx="80" cy="44" r="12" fill="#ffe27a" stroke="#0f2a3a" stroke-width="5"/>
+<ellipse cx="42" cy="84" rx="20" ry="21" fill="#ffffff" stroke="#0f2a3a" stroke-width="4"/>
+<ellipse cx="78" cy="84" rx="20" ry="21" fill="#ffffff" stroke="#0f2a3a" stroke-width="4"/>
+<circle cx="44" cy="87" r="8" fill="#0f2a3a"/>
+<circle cx="80" cy="87" r="8" fill="#0f2a3a"/>
+<circle cx="47" cy="84" r="2.8" fill="#ffffff"/>
+<circle cx="83" cy="84" r="2.8" fill="#ffffff"/>
+<path d="M51 108 H69 V127 A4.5 4.5 0 0 1 64.5 131.5 H62.5 A2.5 2.5 0 0 1 60 129 A2.5 2.5 0 0 1 57.5 131.5 H55.5 A4.5 4.5 0 0 1 51 127 Z" fill="#ffffff" stroke="#0f2a3a" stroke-width="2.5" stroke-linejoin="round"/>
+<path d="M60 112 V129" stroke="#0f2a3a" stroke-width="2.5" stroke-linecap="round"/>
+<rect x="41" y="100" width="38" height="17" rx="8.5" fill="#f6d2a2" stroke="#0f2a3a" stroke-width="3"/>
+<ellipse cx="60" cy="101" rx="10.5" ry="6.5" fill="#0f2a3a"/>
+<path d="M10 130 Q60 146 110 130 L114 142 Q60 162 6 142 Z" fill="#e5533d" stroke="#0f2a3a" stroke-width="5" stroke-linejoin="round"/>
+</symbol>
+<clipPath id="badgeC"><circle cx="200" cy="200" r="192"/></clipPath>
+<clipPath id="chestC"><rect x="0" y="0" width="400" height="306"/></clipPath>
+</defs>
+<circle cx="200" cy="200" r="192" fill="#0f2a3a"/>
+<circle cx="200" cy="200" r="172" fill="none" stroke="#f5b400" stroke-width="10"/>
+<g fill="#f5b400">
+<path d="M150 212 C112 196 80 206 44 240 C84 230 112 234 140 250 Z"/>
+<path d="M150 234 C118 234 90 250 66 288 C98 270 120 268 142 268 Z"/>
+<path d="M250 212 C288 196 320 206 356 240 C316 230 288 234 260 250 Z"/>
+<path d="M250 234 C282 234 310 250 334 288 C302 270 280 268 258 268 Z"/>
+</g>
+<g clip-path="url(#badgeC)"><g clip-path="url(#chestC)"><use href="#gopher" x="104" y="68" width="192" height="208"/></g></g>
+<path d="M184 306 L178 312 M216 306 L222 312" stroke="#f5b400" stroke-width="5" stroke-linecap="round"/>
+<rect x="166" y="312" width="68" height="52" rx="8" fill="#d9a066" stroke="#f5b400" stroke-width="5"/>
+<rect x="193" y="314" width="14" height="48" fill="#b87333"/>
+</svg>

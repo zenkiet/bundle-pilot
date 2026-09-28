@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"net/http"
 	"path"
 	"strings"
@@ -35,11 +36,34 @@ func (rt *Router) static(w http.ResponseWriter, r *http.Request, snap *domain.Sn
 		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(time.Minute + time.Duration(n/minRate)*time.Second))
 	}
 	w.Header()["X-Bundle-Version"] = owner.Tag()
-	if rel == "/ngsw.json" {
+	switch {
+	case rel == "/ngsw.json":
 		serveManifest(w, r, a)
+	case a == b.Index():
+		serveIndex(w, r, a, b.Version)
+	default:
+		a.ServeHTTP(w, r)
+	}
+}
+
+// serveIndex stamps <meta name="edge-gateway:bundle"> into <head>, so the app
+// learns the version it runs as without a build-time copy of the zip name.
+func serveIndex(w http.ResponseWriter, r *http.Request, a *asset.Asset, version string) {
+	body := a.Body()
+	i := bytes.Index(body, []byte("<head"))
+	if i >= 0 {
+		if n := bytes.IndexByte(body[i:], '>'); n >= 0 {
+			i += n + 1
+		} else {
+			i = -1
+		}
+	}
+	if i < 0 {
+		a.ServeHTTP(w, r)
 		return
 	}
-	a.ServeHTTP(w, r)
+	etag := strings.TrimSuffix(a.ETag(), `"`) + "-" + version + `"`
+	a.ServeParts(w, r, etag, append(body[:i:i], `<meta name="edge-gateway:bundle" content="`+version+`">`...), body[i:])
 }
 
 func serveManifest(w http.ResponseWriter, r *http.Request, a *asset.Asset) {

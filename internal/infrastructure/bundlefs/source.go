@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -32,9 +33,9 @@ const (
 
 var errChanged = errors.New("zip changed while loading")
 
-// Source reads <root>/versions/<v>.zip bundles and <root>/config.json, and
-// runs the mirror config.json's source block asks for, writing into dir.
-// Load must not be called concurrently; Stamp may run alongside it.
+// Source reads <root>/versions/<v>.zip and <root>/config.pb, and runs the mirror
+// the config's source block asks for. Load must not run concurrently; Stamp,
+// PutBundle and DeleteBundle may run alongside it.
 type Source struct {
 	fsys   fs.FS
 	dir    string
@@ -55,15 +56,15 @@ type entry struct {
 type version struct {
 	name, path string
 	size       int64
+	mtime      time.Time
 	fp         uint64
 }
 
-// New verifies every bundle's bundle.sha256 signature with key when key is set.
 func New(fsys fs.FS, dir string, log *slog.Logger, key ed25519.PublicKey) *Source {
 	return &Source{fsys: fsys, dir: dir, log: log, key: key, cache: map[string]entry{}}
 }
 
-// Stamp hashes config.json metadata and every zip's size and mtime, so a
+// Stamp hashes config.pb metadata and every zip's size and mtime, so a
 // rewritten file is noticed, not only a renamed one.
 func (s *Source) Stamp() uint64 {
 	h := fnv.New64a()
@@ -84,7 +85,7 @@ func (s *Source) Stamp() uint64 {
 }
 
 func (s *Source) Load() (domain.Inventory, error) {
-	var inv domain.Inventory
+	inv := domain.Inventory{Signed: s.key != nil}
 	inv.Config = s.loadConfig(&inv)
 	if err := s.applySource(inv.Config.Source); err != nil {
 		inv.Errors = append(inv.Errors, "source "+inv.Config.Source.String()+": "+err.Error())
@@ -203,6 +204,7 @@ func (s *Source) loadConfig(inv *domain.Inventory) domain.Config {
 	info, err := fs.Stat(s.fsys, configFile)
 	if errors.Is(err, fs.ErrNotExist) {
 		s.config = domain.Config{}
+		inv.Setup = true
 		msg := "config.pb not found: no rules, every visitor gets the default bundle"
 		if _, err := fs.Stat(s.fsys, "config.json"); err == nil {
 			msg += "; convert config.json with: gateway import config.json"
@@ -234,7 +236,6 @@ func (s *Source) loadConfig(inv *domain.Inventory) domain.Config {
 	return c
 }
 
-// ReadConfig returns the stored config.pb, empty when there is none yet.
 func (s *Source) ReadConfig() (*configv1.Config, error) {
 	data, err := fs.ReadFile(s.fsys, configFile)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -263,7 +264,94 @@ func (s *Source) WriteConfig(pb *configv1.Config) error {
 	return root.Rename("."+configFile+".part", configFile)
 }
 
-// versions lists <versions>/<name>.zip files; anything else is ignored.
+// PutBundle stores <name>.zip once it proves loadable. A remote source gets it
+// first, and the local copy takes the store's mtime so the mirror keeps it.
+func (s *Source) PutBundle(ctx context.Context, name string, r io.Reader) (files int, replaced bool, err error) {
+	root, err := s.versionsRoot()
+	if err != nil {
+		return 0, false, err
+	}
+	defer func() { _ = root.Close() }()
+	tmp := fmt.Sprintf(".%s.%d.part", name, time.Now().UnixNano())
+	f, err := root.Create(tmp)
+	if err != nil {
+		return 0, false, err
+	}
+	defer func() {
+		if err != nil {
+			_ = root.Remove(tmp)
+		}
+	}()
+	size, err := io.Copy(f, r)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	items, closer, err := open(s.fsys, version{name: name, path: path.Join(versionsDir, tmp), size: size})
+	if err != nil {
+		return 0, false, fmt.Errorf("not a zip: %w", err)
+	}
+	if items["/index.html"].open == nil {
+		err = domain.ErrNoIndex
+	} else if s.key != nil {
+		err = verify(s.key, items, nil, 0)
+	}
+	_ = closer.Close()
+	if err != nil {
+		return 0, false, err
+	}
+	if m := s.mirror.Load(); m != nil {
+		f, err := root.Open(tmp)
+		if err != nil {
+			return 0, false, err
+		}
+		mt, err := m.Store().Put(ctx, name+".zip", f, size)
+		_ = f.Close()
+		if err != nil {
+			return 0, false, fmt.Errorf("upload to %s: %w", s.active.String(), err)
+		}
+		if err := root.Chtimes(tmp, mt, mt); err != nil {
+			return 0, false, err
+		}
+	}
+	_, statErr := root.Stat(name + ".zip")
+	if err = root.Rename(tmp, name+".zip"); err != nil {
+		return 0, false, err
+	}
+	return len(items), statErr == nil, nil
+}
+
+func (s *Source) DeleteBundle(ctx context.Context, name string) error {
+	root, err := s.versionsRoot()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	if m := s.mirror.Load(); m != nil {
+		if err := m.Store().Delete(ctx, name+".zip"); err != nil {
+			return fmt.Errorf("delete from %s: %w", s.active.String(), err)
+		}
+	}
+	return root.Remove(name + ".zip")
+}
+
+func (s *Source) SyncState() (at time.Time, objects int, err string) {
+	if m := s.mirror.Load(); m != nil {
+		return m.Status()
+	}
+	return time.Time{}, 0, ""
+}
+
+func (s *Source) versionsRoot() (*os.Root, error) {
+	dir := filepath.Join(s.dir, versionsDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	return os.OpenRoot(dir)
+}
+
 func (s *Source) versions() ([]version, error) {
 	entries, err := fs.ReadDir(s.fsys, versionsDir)
 	if err != nil {
@@ -277,7 +365,7 @@ func (s *Source) versions() ([]version, error) {
 		}
 		p := path.Join(versionsDir, e.Name())
 		if info, err := fs.Stat(s.fsys, p); err == nil && info.Mode().IsRegular() {
-			out = append(out, version{name, p, info.Size(), fingerprint(info)})
+			out = append(out, version{name, p, info.Size(), info.ModTime(), fingerprint(info)})
 		}
 	}
 	return out, nil

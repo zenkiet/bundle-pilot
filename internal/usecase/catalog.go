@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"runtime/debug"
 	"slices"
@@ -20,6 +21,9 @@ type Source interface {
 	Load() (domain.Inventory, error)
 	ReadConfig() (*configv1.Config, error)
 	WriteConfig(*configv1.Config) error
+	PutBundle(ctx context.Context, name string, r io.Reader) (files int, replaced bool, err error)
+	DeleteBundle(ctx context.Context, name string) error
+	SyncState() (at time.Time, objects int, err string)
 }
 
 type Catalog struct {
@@ -39,7 +43,6 @@ func NewCatalog(src Source, log *slog.Logger) *Catalog {
 
 func (c *Catalog) Current() *domain.Snapshot { return c.cur.Load() }
 
-// Stats reports successful reloads and the last reload error, for status.
 func (c *Catalog) Stats() (reloads uint64, lastErr string) {
 	if p := c.lastErr.Load(); p != nil {
 		lastErr = *p
@@ -47,7 +50,6 @@ func (c *Catalog) Stats() (reloads uint64, lastErr string) {
 	return c.reloads.Load(), lastErr
 }
 
-// Config is the stored config.pb, as the admin API edits it.
 func (c *Catalog) Config() (*configv1.Config, error) { return c.src.ReadConfig() }
 
 // SaveConfig writes config.pb and reloads, so the caller sees the outcome.
@@ -57,6 +59,24 @@ func (c *Catalog) SaveConfig(pb *configv1.Config) error {
 	}
 	return c.Reload()
 }
+
+// PutBundle stores an uploaded zip and reloads; the upload itself runs
+// outside the lock so a slow client never blocks the watcher.
+func (c *Catalog) PutBundle(ctx context.Context, name string, r io.Reader) (files int, replaced bool, err error) {
+	if files, replaced, err = c.src.PutBundle(ctx, name, r); err == nil {
+		err = c.Reload()
+	}
+	return files, replaced, err
+}
+
+func (c *Catalog) DeleteBundle(ctx context.Context, name string) error {
+	if err := c.src.DeleteBundle(ctx, name); err != nil {
+		return err
+	}
+	return c.Reload()
+}
+
+func (c *Catalog) SyncState() (at time.Time, objects int, err string) { return c.src.SyncState() }
 
 func (c *Catalog) Reload() error {
 	c.mu.Lock()

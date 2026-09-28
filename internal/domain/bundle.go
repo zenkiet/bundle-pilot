@@ -19,11 +19,13 @@ import (
 var ErrNoIndex = errors.New("index.html missing")
 
 type Bundle struct {
-	Version string
-	base    string
-	tag     []string
-	files   map[string]*asset.Asset
-	index   *asset.Asset
+	Version  string
+	ZipBytes int64
+	ModTime  time.Time
+	base     string
+	tag      []string
+	files    map[string]*asset.Asset
+	index    *asset.Asset
 }
 
 func NewBundle(ver, baseHref string, files map[string]*asset.Asset) (*Bundle, error) {
@@ -34,7 +36,6 @@ func NewBundle(ver, baseHref string, files map[string]*asset.Asset) (*Bundle, er
 	return &Bundle{Version: ver, base: normalizeBase(baseHref), tag: []string{ver}, files: files, index: index}, nil
 }
 
-// Bytes is the uncompressed size of the bundle's files.
 func (b *Bundle) Bytes() int {
 	n := 0
 	for _, a := range b.files {
@@ -43,7 +44,6 @@ func (b *Bundle) Bytes() int {
 	return n
 }
 
-// Tag is Version as a shared, read-only header value.
 func (b *Bundle) Tag() []string { return b.tag }
 
 func (b *Bundle) Index() *asset.Asset { return b.index }
@@ -62,6 +62,8 @@ type Inventory struct {
 	Errors  []string
 	Issues  []string
 	Retry   bool
+	Signed  bool
+	Setup   bool
 }
 
 type owned struct {
@@ -79,6 +81,8 @@ type Snapshot struct {
 	Issues      []string
 	LoadedAt    time.Time
 	Resident    int
+	Signed      bool
+	Setup       bool
 	bundles     map[string]*Bundle
 	order       []*Bundle
 	hashed      map[string]owned
@@ -94,6 +98,8 @@ func NewSnapshot(inv Inventory, now time.Time) (*Snapshot, error) {
 		Errors:   inv.Errors,
 		Issues:   slices.Clone(inv.Issues),
 		LoadedAt: now,
+		Signed:   inv.Signed,
+		Setup:    inv.Setup,
 		bundles:  make(map[string]*Bundle, len(inv.Bundles)),
 		order:    slices.Clone(inv.Bundles),
 		hashed:   map[string]owned{},
@@ -117,7 +123,7 @@ func NewSnapshot(inv Inventory, now time.Time) (*Snapshot, error) {
 		}
 	}
 	s.pickDefault(inv.Config.Default)
-	s.Config = Config{Default: s.Default.Version, Dates: inv.Config.Dates, Rules: slices.Clone(inv.Config.Rules), Source: inv.Config.Source}
+	s.Config = Config{Project: inv.Config.Project, Environment: inv.Config.Environment, Default: s.Default.Version, Dates: inv.Config.Dates, Rules: slices.Clone(inv.Config.Rules), Source: inv.Config.Source, Auth: inv.Config.Auth}
 	s.Config.Backend, s.Issues = inv.Config.Backend.validate(s.Config.Dates, s.bundles, now, s.Issues)
 	keys := map[string]string{}
 	for i := range s.Config.Rules {

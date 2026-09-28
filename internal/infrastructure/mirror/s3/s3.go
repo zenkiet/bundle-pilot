@@ -31,6 +31,7 @@ func New(src domain.Source) (*Store, error) {
 		config.WithRegion(src.Region),
 		config.WithLogger(logging.Nop{}),
 		config.WithHTTPClient(&http.Client{Timeout: 5 * time.Minute}),
+		config.WithRequestChecksumCalculation(aws.RequestChecksumCalculationWhenRequired),
 	}
 	if src.AccessKeyID != "" {
 		opts = append(opts, config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(src.AccessKeyID, src.SecretAccessKey, "")))
@@ -69,4 +70,21 @@ func (s *Store) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 		return nil, err
 	}
 	return out.Body, nil
+}
+
+func (s *Store) Put(ctx context.Context, key string, body io.ReadSeeker, size int64) (time.Time, error) {
+	k := aws.String(s.prefix + key)
+	if _, err := s.client.PutObject(ctx, &s3.PutObjectInput{Bucket: &s.bucket, Key: k, Body: body, ContentLength: aws.Int64(size), ContentType: aws.String("application/zip")}); err != nil {
+		return time.Time{}, err
+	}
+	head, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: &s.bucket, Key: k})
+	if err != nil {
+		return time.Time{}, err
+	}
+	return aws.ToTime(head.LastModified), nil
+}
+
+func (s *Store) Delete(ctx context.Context, key string) error {
+	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: &s.bucket, Key: aws.String(s.prefix + key)})
+	return err
 }

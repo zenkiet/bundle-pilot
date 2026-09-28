@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/zenkiet/edge-gateway/internal/usecase"
 )
@@ -15,6 +16,7 @@ type Router struct {
 	log       *slog.Logger
 	mu        sync.Mutex
 	decisions map[string]uint64
+	session   atomic.Pointer[session]
 }
 
 // New routes with a ServeMux: method patterns answer the wrong method with
@@ -24,9 +26,12 @@ func New(cat *usecase.Catalog, ui fs.FS, log *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(http.ResponseWriter, *http.Request) {})
 	mux.HandleFunc("POST /__gateway/data", rt.data)
-	mux.HandleFunc("GET /__gateway/status", rt.status)
-	mux.HandleFunc("GET /__gateway/config", rt.getConfig)
-	mux.HandleFunc("PUT /__gateway/config", rt.putConfig)
+	mux.HandleFunc("GET /__gateway/status", rt.auth(rt.status))
+	mux.HandleFunc("GET /__gateway/config", rt.auth(rt.getConfig))
+	mux.HandleFunc("PUT /__gateway/config", rt.auth(rt.putConfig))
+	mux.HandleFunc("PUT /__gateway/bundles/{name}", rt.auth(rt.putBundle))
+	mux.HandleFunc("DELETE /__gateway/bundles/{name}", rt.auth(rt.deleteBundle))
+	mux.HandleFunc("POST /__gateway/reload", rt.auth(rt.reload))
 	mux.Handle("GET /__gateway/ui/", http.StripPrefix("/__gateway/ui/", http.FileServerFS(ui)))
 	mux.Handle("GET /__gateway/", http.NotFoundHandler())
 	mux.HandleFunc("GET /", rt.root)

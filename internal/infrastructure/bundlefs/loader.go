@@ -156,7 +156,9 @@ func loadBundles(fsys fs.FS, pub ed25519.PublicKey, vs []version, known map[[32]
 				continue
 			}
 		}
-		bundles[i], errs[i] = domain.NewBundle(v.name, baseHrefOf(files[i]["/index.html"].Body()), files[i])
+		if bundles[i], errs[i] = domain.NewBundle(v.name, baseHrefOf(files[i]["/index.html"].Body()), files[i]); errs[i] == nil {
+			bundles[i].ZipBytes, bundles[i].ModTime = v.size, v.mtime
+		}
 	}
 	return bundles, errs
 }

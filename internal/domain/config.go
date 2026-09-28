@@ -29,11 +29,14 @@ const (
 // Config is config.json: rules are checked top to bottom, then the backend
 // table, then default.
 type Config struct {
-	Default string
-	Dates   version.Layout
-	Backend Mapping
-	Rules   []Rule
-	Source  Source
+	Project     string
+	Environment string
+	Default     string
+	Dates       version.Layout
+	Backend     Mapping
+	Rules       []Rule
+	Source      Source
+	Auth        Auth
 }
 
 // Source is where versions/*.zip come from; the zero value is the local
@@ -110,7 +113,10 @@ func ParseConfig(pb *configv1.Config) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	c := Config{Default: strings.TrimSpace(pb.DefaultBundle), Dates: l, Backend: NewMapping(l, pb.Backend), Source: src}
+	c := Config{Project: strings.TrimSpace(pb.ProjectName), Environment: strings.TrimSpace(pb.Environment), Default: strings.TrimSpace(pb.DefaultBundle), Dates: l, Backend: NewMapping(l, pb.Backend), Source: src}
+	if c.Auth, err = parseAuth(pb.Auth); err != nil {
+		return Config{}, err
+	}
 	kind, err := c.Backend.kind(l)
 	if err != nil {
 		return Config{}, err
@@ -268,6 +274,24 @@ func parseRule(i int, rf *configv1.Rule, l version.Layout) (Rule, error) {
 		r.key = strings.ToLower(string(r.When))
 	}
 	return r, nil
+}
+
+// parseAuth hashes a plaintext password into pb, so what gets stored never holds it.
+func parseAuth(f *configv1.Auth) (Auth, error) {
+	if f == nil {
+		return Auth{}, nil
+	}
+	f.Username = strings.TrimSpace(f.Username)
+	if f.Password != "" {
+		if len(f.Password) < 8 {
+			return Auth{}, errors.New("auth.password: at least 8 characters")
+		}
+		f.PasswordHash, f.Password = HashPassword(f.Password), ""
+	}
+	if (f.Username == "") != (f.PasswordHash == "") {
+		return Auth{}, errors.New("auth: username and password go together")
+	}
+	return Auth{Username: f.Username, Hash: f.PasswordHash}, nil
 }
 
 func parseSource(f *configv1.Source) (Source, error) {

@@ -6,6 +6,7 @@ import (
 	"maps"
 	"mime"
 	"net/http"
+	"runtime/debug"
 	"time"
 
 	"github.com/zenkiet/edge-gateway/internal/domain"
@@ -66,10 +67,28 @@ func (rt *Router) data(w http.ResponseWriter, r *http.Request) {
 }
 
 type bundleStatus struct {
-	Version string `json:"version"`
-	Files   int    `json:"files"`
-	Bytes   int    `json:"bytes"`
+	Version  string    `json:"version"`
+	Files    int       `json:"files"`
+	Bytes    int       `json:"bytes"`
+	ZipBytes int64     `json:"zip_bytes"`
+	ModTime  time.Time `json:"mod_time"`
 }
+
+type syncStatus struct {
+	At      time.Time `json:"at"`
+	Objects int       `json:"objects"`
+	Error   string    `json:"error"`
+}
+
+var (
+	started = time.Now()
+	build   = func() string {
+		if bi, ok := debug.ReadBuildInfo(); ok {
+			return bi.Main.Version
+		}
+		return ""
+	}()
+)
 
 func (rt *Router) status(w http.ResponseWriter, _ *http.Request) {
 	snap := rt.cat.Current()
@@ -78,10 +97,18 @@ func (rt *Router) status(w http.ResponseWriter, _ *http.Request) {
 	decisions := maps.Clone(rt.decisions)
 	rt.mu.Unlock()
 	out := struct {
+		Version     string            `json:"version"`
+		StartedAt   time.Time         `json:"started_at"`
+		Project     string            `json:"project_name"`
+		Environment string            `json:"environment"`
+		Setup       bool              `json:"setup_required"`
+		Auth        bool              `json:"auth"`
 		Default     string            `json:"default"`
 		DefaultFrom string            `json:"default_from"`
 		BasePath    string            `json:"base_path"`
 		Source      string            `json:"source"`
+		Sync        *syncStatus       `json:"sync,omitempty"`
+		Signing     bool              `json:"signing"`
 		LoadedAt    time.Time         `json:"loaded_at"`
 		Reloads     uint64            `json:"reloads"`
 		LastError   string            `json:"last_error"`
@@ -93,11 +120,14 @@ func (rt *Router) status(w http.ResponseWriter, _ *http.Request) {
 		Decisions   map[string]uint64 `json:"decisions"`
 		Issues      []string          `json:"issues"`
 	}{
-		snap.Default.Version, snap.DefaultFrom, snap.BasePath, snap.Config.Source.String(), snap.LoadedAt, reloads, lastErr, snap.Errors,
+		build, started, snap.Config.Project, snap.Config.Environment, snap.Setup, snap.Config.Auth.Hash != "", snap.Default.Version, snap.DefaultFrom, snap.BasePath, snap.Config.Source.String(), nil, snap.Signed, snap.LoadedAt, reloads, lastErr, snap.Errors,
 		snap.Resident, nil, snap.Config.Rules, snap.Config.Backend, decisions, snap.Issues,
 	}
+	if at, n, syncErr := rt.cat.SyncState(); !at.IsZero() {
+		out.Sync = &syncStatus{at, n, syncErr}
+	}
 	for _, b := range snap.Bundles() {
-		out.Bundles = append(out.Bundles, bundleStatus{b.Version, b.Len(), b.Bytes()})
+		out.Bundles = append(out.Bundles, bundleStatus{b.Version, b.Len(), b.Bytes(), b.ZipBytes, b.ModTime})
 	}
 	writeJSON(w, http.StatusOK, out)
 }

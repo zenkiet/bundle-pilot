@@ -33,8 +33,13 @@ type Config struct {
 	// Bundle for visitors without a cookie and when nothing matches.
 	DefaultBundle string `protobuf:"bytes,4,opt,name=default_bundle,json=default,proto3" json:"default_bundle,omitempty"`
 	// Oldest backend version each bundle supports: "<backend>": "<bundle>".
-	Backend       map[string]string `protobuf:"bytes,5,rep,name=backend,proto3" json:"backend,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Rules         []*Rule           `protobuf:"bytes,6,rep,name=rules,proto3" json:"rules,omitempty"`
+	Backend map[string]string `protobuf:"bytes,5,rep,name=backend,proto3" json:"backend,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Rules   []*Rule           `protobuf:"bytes,6,rep,name=rules,proto3" json:"rules,omitempty"`
+	Auth    *Auth             `protobuf:"bytes,7,opt,name=auth,proto3" json:"auth,omitempty"`
+	// Shown in the admin UI: browser tab and sidebar heading.
+	ProjectName string `protobuf:"bytes,8,opt,name=project_name,json=projectName,proto3" json:"project_name,omitempty"`
+	// Label next to the name, e.g. production.
+	Environment   string `protobuf:"bytes,9,opt,name=environment,proto3" json:"environment,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -111,6 +116,90 @@ func (x *Config) GetRules() []*Rule {
 	return nil
 }
 
+func (x *Config) GetAuth() *Auth {
+	if x != nil {
+		return x.Auth
+	}
+	return nil
+}
+
+func (x *Config) GetProjectName() string {
+	if x != nil {
+		return x.ProjectName
+	}
+	return ""
+}
+
+func (x *Config) GetEnvironment() string {
+	if x != nil {
+		return x.Environment
+	}
+	return ""
+}
+
+// Auth protects /__gateway/* except /__gateway/data and /healthz with HTTP Basic auth.
+type Auth struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Username string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	// pbkdf2-sha256, written by the gateway; masked as *** when read back.
+	PasswordHash string `protobuf:"bytes,2,opt,name=password_hash,json=passwordHash,proto3" json:"password_hash,omitempty"`
+	// Write-only: hashed into password_hash before config.pb is stored.
+	Password      string `protobuf:"bytes,3,opt,name=password,proto3" json:"password,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Auth) Reset() {
+	*x = Auth{}
+	mi := &file_edgegateway_config_v1_config_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Auth) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Auth) ProtoMessage() {}
+
+func (x *Auth) ProtoReflect() protoreflect.Message {
+	mi := &file_edgegateway_config_v1_config_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Auth.ProtoReflect.Descriptor instead.
+func (*Auth) Descriptor() ([]byte, []int) {
+	return file_edgegateway_config_v1_config_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *Auth) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+func (x *Auth) GetPasswordHash() string {
+	if x != nil {
+		return x.PasswordHash
+	}
+	return ""
+}
+
+func (x *Auth) GetPassword() string {
+	if x != nil {
+		return x.Password
+	}
+	return ""
+}
+
 // Source is where versions/*.zip come from; unset means the local directory.
 type Source struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -134,7 +223,7 @@ type Source struct {
 
 func (x *Source) Reset() {
 	*x = Source{}
-	mi := &file_edgegateway_config_v1_config_proto_msgTypes[1]
+	mi := &file_edgegateway_config_v1_config_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -146,7 +235,7 @@ func (x *Source) String() string {
 func (*Source) ProtoMessage() {}
 
 func (x *Source) ProtoReflect() protoreflect.Message {
-	mi := &file_edgegateway_config_v1_config_proto_msgTypes[1]
+	mi := &file_edgegateway_config_v1_config_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -159,7 +248,7 @@ func (x *Source) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Source.ProtoReflect.Descriptor instead.
 func (*Source) Descriptor() ([]byte, []int) {
-	return file_edgegateway_config_v1_config_proto_rawDescGZIP(), []int{1}
+	return file_edgegateway_config_v1_config_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *Source) GetType() string {
@@ -235,7 +324,7 @@ type Rule struct {
 
 func (x *Rule) Reset() {
 	*x = Rule{}
-	mi := &file_edgegateway_config_v1_config_proto_msgTypes[2]
+	mi := &file_edgegateway_config_v1_config_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -247,7 +336,7 @@ func (x *Rule) String() string {
 func (*Rule) ProtoMessage() {}
 
 func (x *Rule) ProtoReflect() protoreflect.Message {
-	mi := &file_edgegateway_config_v1_config_proto_msgTypes[2]
+	mi := &file_edgegateway_config_v1_config_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -260,7 +349,7 @@ func (x *Rule) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Rule.ProtoReflect.Descriptor instead.
 func (*Rule) Descriptor() ([]byte, []int) {
-	return file_edgegateway_config_v1_config_proto_rawDescGZIP(), []int{2}
+	return file_edgegateway_config_v1_config_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *Rule) GetId() string {
@@ -302,7 +391,7 @@ var File_edgegateway_config_v1_config_proto protoreflect.FileDescriptor
 
 const file_edgegateway_config_v1_config_proto_rawDesc = "" +
 	"\n" +
-	"\"edgegateway/config/v1/config.proto\x12\x15edgegateway.config.v1\x1a\x1cgoogle/protobuf/struct.proto\"\xcf\x02\n" +
+	"\"edgegateway/config/v1/config.proto\x12\x15edgegateway.config.v1\x1a\x1cgoogle/protobuf/struct.proto\"\xc5\x03\n" +
 	"\x06Config\x12\x17\n" +
 	"\x06schema\x18\x01 \x01(\tR\a$schema\x125\n" +
 	"\x06source\x18\x02 \x01(\v2\x1d.edgegateway.config.v1.SourceR\x06source\x12\x1f\n" +
@@ -310,10 +399,17 @@ const file_edgegateway_config_v1_config_proto_rawDesc = "" +
 	"dateFormat\x12\x1f\n" +
 	"\x0edefault_bundle\x18\x04 \x01(\tR\adefault\x12D\n" +
 	"\abackend\x18\x05 \x03(\v2*.edgegateway.config.v1.Config.BackendEntryR\abackend\x121\n" +
-	"\x05rules\x18\x06 \x03(\v2\x1b.edgegateway.config.v1.RuleR\x05rules\x1a:\n" +
+	"\x05rules\x18\x06 \x03(\v2\x1b.edgegateway.config.v1.RuleR\x05rules\x12/\n" +
+	"\x04auth\x18\a \x01(\v2\x1b.edgegateway.config.v1.AuthR\x04auth\x12!\n" +
+	"\fproject_name\x18\b \x01(\tR\vprojectName\x12 \n" +
+	"\venvironment\x18\t \x01(\tR\venvironment\x1a:\n" +
 	"\fBackendEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xe4\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"c\n" +
+	"\x04Auth\x12\x1a\n" +
+	"\busername\x18\x01 \x01(\tR\busername\x12#\n" +
+	"\rpassword_hash\x18\x02 \x01(\tR\fpasswordHash\x12\x1a\n" +
+	"\bpassword\x18\x03 \x01(\tR\bpassword\"\xe4\x01\n" +
 	"\x06Source\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12\x16\n" +
 	"\x06bucket\x18\x02 \x01(\tR\x06bucket\x12\x16\n" +
@@ -342,24 +438,26 @@ func file_edgegateway_config_v1_config_proto_rawDescGZIP() []byte {
 	return file_edgegateway_config_v1_config_proto_rawDescData
 }
 
-var file_edgegateway_config_v1_config_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_edgegateway_config_v1_config_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_edgegateway_config_v1_config_proto_goTypes = []any{
 	(*Config)(nil),          // 0: edgegateway.config.v1.Config
-	(*Source)(nil),          // 1: edgegateway.config.v1.Source
-	(*Rule)(nil),            // 2: edgegateway.config.v1.Rule
-	nil,                     // 3: edgegateway.config.v1.Config.BackendEntry
-	(*structpb.Struct)(nil), // 4: google.protobuf.Struct
+	(*Auth)(nil),            // 1: edgegateway.config.v1.Auth
+	(*Source)(nil),          // 2: edgegateway.config.v1.Source
+	(*Rule)(nil),            // 3: edgegateway.config.v1.Rule
+	nil,                     // 4: edgegateway.config.v1.Config.BackendEntry
+	(*structpb.Struct)(nil), // 5: google.protobuf.Struct
 }
 var file_edgegateway_config_v1_config_proto_depIdxs = []int32{
-	1, // 0: edgegateway.config.v1.Config.source:type_name -> edgegateway.config.v1.Source
-	3, // 1: edgegateway.config.v1.Config.backend:type_name -> edgegateway.config.v1.Config.BackendEntry
-	2, // 2: edgegateway.config.v1.Config.rules:type_name -> edgegateway.config.v1.Rule
-	4, // 3: edgegateway.config.v1.Rule.when:type_name -> google.protobuf.Struct
-	4, // [4:4] is the sub-list for method output_type
-	4, // [4:4] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	2, // 0: edgegateway.config.v1.Config.source:type_name -> edgegateway.config.v1.Source
+	4, // 1: edgegateway.config.v1.Config.backend:type_name -> edgegateway.config.v1.Config.BackendEntry
+	3, // 2: edgegateway.config.v1.Config.rules:type_name -> edgegateway.config.v1.Rule
+	1, // 3: edgegateway.config.v1.Config.auth:type_name -> edgegateway.config.v1.Auth
+	5, // 4: edgegateway.config.v1.Rule.when:type_name -> google.protobuf.Struct
+	5, // [5:5] is the sub-list for method output_type
+	5, // [5:5] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_edgegateway_config_v1_config_proto_init() }
@@ -373,7 +471,7 @@ func file_edgegateway_config_v1_config_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_edgegateway_config_v1_config_proto_rawDesc), len(file_edgegateway_config_v1_config_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   4,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

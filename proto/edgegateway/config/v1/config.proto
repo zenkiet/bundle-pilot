@@ -18,6 +18,20 @@ message Config {
   // Oldest backend version each bundle supports: "<backend>": "<bundle>".
   map<string, string> backend = 5;
   repeated Rule rules = 6;
+  Auth auth = 7;
+  // Shown in the admin UI: browser tab and sidebar heading.
+  string project_name = 8;
+  // Label next to the name, e.g. production.
+  string environment = 9;
+}
+
+// Auth protects /__gateway/* except /__gateway/data and /healthz with HTTP Basic auth.
+message Auth {
+  string username = 1;
+  // pbkdf2-sha256, written by the gateway; masked as *** when read back.
+  string password_hash = 2;
+  // Write-only: hashed into password_hash before config.pb is stored.
+  string password = 3;
 }
 
 // Source is where versions/*.zip come from; unset means the local directory.
