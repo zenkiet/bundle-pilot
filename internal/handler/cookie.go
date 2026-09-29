@@ -7,11 +7,10 @@ import (
 )
 
 const (
-	cookieName = "bundle"
-	revCookie  = "bundle_rev"
-	cookieAge  = 365 * 24 * 3600 // 1 year
-	// decisionAge is short so users parked on bundles that never call /data
-	// fall back to the default and get re-decided; /data refreshes it.
+	cookieName  = "bundle"
+	revCookie   = "bundle_rev"
+	factsCookie = "bundle_facts"
+	cookieAge   = 365 * 24 * 3600 // 1 year
 	decisionAge = 7 * 24 * 3600
 )
 

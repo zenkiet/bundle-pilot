@@ -6,6 +6,7 @@ import (
 	"maps"
 	"mime"
 	"net/http"
+	"net/url"
 	"runtime/debug"
 	"time"
 
@@ -45,25 +46,49 @@ func (rt *Router) data(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Header.Get("X-Dry-Run") == "" {
-		cookie := cookieValue(r, cookieName)
-		_, cur := snap.Pick("", cookie)
-		switch {
-		case via != "default":
-			setBundle(w, r, b.Version, decisionAge, cur.Version != b.Version)
-		case cookie != "":
-			setBundle(w, r, "", -1, cur.Version != b.Version)
-		}
-		rt.mu.Lock()
-		rt.decisions[via]++
-		rt.mu.Unlock()
-		if cur.Version != b.Version {
-			rt.log.Debug("bundle switch", "from", cur.Version, "to", b.Version, "via", via)
-		}
+		rt.apply(w, r, snap, b, via)
 	}
 	writeJSON(w, http.StatusOK, struct {
 		Bundle string `json:"bundle"`
 		Via    string `json:"via"`
 	}{b.Version, via})
+}
+
+// apply pins a decision in the cookie and counts it; a default decision
+// clears the cookie so later default changes apply.
+func (rt *Router) apply(w http.ResponseWriter, r *http.Request, snap *domain.Snapshot, b *domain.Bundle, via string) {
+	cookie := cookieValue(r, cookieName)
+	_, cur := snap.Pick("", cookie)
+	switch {
+	case via != "default":
+		setBundle(w, r, b.Version, decisionAge, cur.Version != b.Version)
+	case cookie != "":
+		setBundle(w, r, "", -1, cur.Version != b.Version)
+	}
+	rt.mu.Lock()
+	rt.decisions[via]++
+	rt.mu.Unlock()
+	if cur.Version != b.Version {
+		rt.log.Debug("bundle switch", "from", cur.Version, "to", b.Version, "via", via)
+	}
+}
+
+// cookieFacts reads the facts the SDK keeps in a cookie after each sync, so
+// index.html can be decided on the first byte instead of after a /data call.
+func cookieFacts(r *http.Request) domain.Facts {
+	c, err := r.Cookie(factsCookie)
+	if err != nil {
+		return nil
+	}
+	s, err := url.PathUnescape(c.Value)
+	if err != nil || len(s) > maxFactsBody {
+		return nil
+	}
+	f, err := domain.ParseFacts([]byte(s))
+	if err != nil {
+		return nil
+	}
+	return f
 }
 
 type bundleStatus struct {

@@ -156,8 +156,9 @@ func loadBundles(fsys fs.FS, pub ed25519.PublicKey, vs []version, known map[[32]
 				continue
 			}
 		}
-		if bundles[i], errs[i] = domain.NewBundle(v.name, baseHrefOf(files[i]["/index.html"].Body()), files[i]); errs[i] == nil {
-			bundles[i].ZipBytes, bundles[i].ModTime = v.size, v.mtime
+		base, link := indexMeta(files[i]["/index.html"].Body())
+		if bundles[i], errs[i] = domain.NewBundle(v.name, base, files[i]); errs[i] == nil {
+			bundles[i].ZipBytes, bundles[i].ModTime, bundles[i].Link = v.size, v.mtime, link
 		}
 	}
 	return bundles, errs
@@ -331,21 +332,53 @@ func (z *compressor) gzip(body []byte) []byte {
 }
 
 // baseHrefOf reads <base href> from index.html; without one the app mounts at /.
-func baseHrefOf(index []byte) string {
+// indexMeta reads <base href> and what index.html preloads (module scripts,
+// modulepreload links, stylesheets), joined as a Link header value.
+func indexMeta(index []byte) (base, link string) {
+	base = "/"
+	var links []string
 	z := html.NewTokenizer(bytes.NewReader(index))
 	for {
-		switch z.Next() {
-		case html.ErrorToken:
-			return "/"
-		case html.StartTagToken, html.SelfClosingTagToken:
-			if name, hasAttr := z.TagName(); string(name) == "base" && hasAttr {
-				for more := true; more; {
-					var k, v []byte
-					if k, v, more = z.TagAttr(); string(k) == "href" {
-						return string(v)
-					}
-				}
+		tt := z.Next()
+		if tt == html.ErrorToken {
+			break
+		}
+		if tt != html.StartTagToken && tt != html.SelfClosingTagToken {
+			continue
+		}
+		name, hasAttr := z.TagName()
+		if !hasAttr {
+			continue
+		}
+		attr := map[string]string{}
+		for more := true; more; {
+			var k, v []byte
+			k, v, more = z.TagAttr()
+			attr[string(k)] = string(v)
+		}
+		switch string(name) {
+		case "base":
+			if h := attr["href"]; h != "" {
+				base = h
+			}
+		case "link":
+			switch attr["rel"] {
+			case "modulepreload":
+				links = append(links, attr["href"]+">; rel=modulepreload")
+			case "stylesheet":
+				links = append(links, attr["href"]+">; rel=preload; as=style")
+			}
+		case "script":
+			if attr["type"] == "module" && attr["src"] != "" {
+				links = append(links, attr["src"]+">; rel=modulepreload")
 			}
 		}
 	}
+	for i, l := range links[:min(len(links), 12)] {
+		if !strings.HasPrefix(l, "/") && !strings.Contains(l, "://") {
+			l = strings.TrimSuffix(base, "/") + "/" + l
+		}
+		links[i] = "<" + l
+	}
+	return base, strings.Join(links[:min(len(links), 12)], ", ")
 }

@@ -22,6 +22,7 @@ type Bundle struct {
 	Version  string
 	ZipBytes int64
 	ModTime  time.Time
+	Link     string
 	base     string
 	tag      []string
 	files    map[string]*asset.Asset

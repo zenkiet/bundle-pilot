@@ -29,6 +29,14 @@ func (rt *Router) static(w http.ResponseWriter, r *http.Request, snap *domain.Sn
 		}
 		a, owner = b.Index(), b
 	}
+	if a == b.Index() && query == "" {
+		if f := cookieFacts(r); f != nil {
+			if d, via, err := snap.Decide(f, time.Now()); err == nil {
+				rt.apply(w, r, snap, d, via)
+				b, a, owner = d, d.Index(), d
+			}
+		}
+	}
 	if query == b.Version && query != cookie && !a.Immutable() && r.Header.Get("Sec-Fetch-Site") != "cross-site" {
 		setBundle(w, r, b.Version, cookieAge, cur.Version != b.Version)
 	}
@@ -40,7 +48,7 @@ func (rt *Router) static(w http.ResponseWriter, r *http.Request, snap *domain.Sn
 	case rel == "/ngsw.json":
 		serveManifest(w, r, a)
 	case a == b.Index():
-		serveIndex(w, r, a, b.Version)
+		serveIndex(w, r, b)
 	default:
 		a.ServeHTTP(w, r)
 	}
@@ -48,7 +56,11 @@ func (rt *Router) static(w http.ResponseWriter, r *http.Request, snap *domain.Sn
 
 // serveIndex stamps <meta name="bundle-pilot:bundle"> into <head>, so the app
 // learns the version it runs as without a build-time copy of the zip name.
-func serveIndex(w http.ResponseWriter, r *http.Request, a *asset.Asset, version string) {
+func serveIndex(w http.ResponseWriter, r *http.Request, b *domain.Bundle) {
+	a, version := b.Index(), b.Version
+	if b.Link != "" {
+		w.Header().Set("Link", b.Link)
+	}
 	body := a.Body()
 	i := bytes.Index(body, []byte("<head"))
 	if i >= 0 {

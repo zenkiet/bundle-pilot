@@ -213,7 +213,7 @@ connections are closed.
 
 | Path | Behaviour |
 |---|---|
-| `<base href>**` | Bundle chosen by `?bundle=`, then cookie `bundle`, then default. Hashed files resolve across all bundles so open sessions never 404 after a switch. Navigations (`Accept: text/html`) and paths without an extension fall back to `index.html`. |
+| `<base href>**` | Bundle chosen by `?bundle=`, then cookie `bundle`, then default. When the request is for `index.html` and the browser carries the `bundle_facts` cookie the SDK writes after each sync, the gateway decides from those facts right there (rules, backend table, default) and sets the `bundle` cookie, so a returning visitor gets the right build on the first byte without a `/data` call. `index.html` also carries a `Link` header preloading its module scripts and stylesheets (at most 12), which a CDN can turn into 103 Early Hints. Hashed files resolve across all bundles so open sessions never 404 after a switch. Navigations (`Accept: text/html`) and paths without an extension fall back to `index.html`. |
 | `POST /__gateway/data` | Body: a flat JSON object of facts (`Content-Type: application/json`, at most 4 KiB and 32 facts), e.g. `{"backend":"07.30.2026","storeID":2020210}`. Returns `{"bundle":"4.80.0","via":"rule:store-2020210"}`, where `via` is `rule:<id>`, `backend:<key>` or `default`. A rule or backend decision sets cookie `bundle` for 7 days (refreshed on every call); a default decision clears it. Cross-origin requests are refused. Send `X-Dry-Run: 1` to see the decision without cookies or counters. |
 | `GET /__gateway/config` | The stored config, JSON by default or protobuf with `Accept: application/x-protobuf`; the S3 secret and the password hash come back masked as `***`. |
 | `PUT /__gateway/config` | Replace the config (`application/json` or `application/x-protobuf`). Validated against the loaded bundles: 422 with `errors` when rejected, else `issues` (warnings) and `saved`; the gateway reloads before answering. `X-Dry-Run: 1` validates without saving. A masked secret or password hash keeps the stored one; `auth.password` is hashed before the file is written. |
@@ -261,22 +261,27 @@ Angular apps can skip the snippet below: `libs/angular` ships `provideBundlePilo
 
 Post every fact the app knows, and reload when the answer differs from the
 version it was built as (`environment.version` must equal the zip's name
-without `.zip`). Call it at boot, while the splash screen is up, with the
-backend version plus the facts remembered from the last login, and again
-after login, logout or a store switch. Skip it when the URL pins a bundle
-with `?bundle=`, or the pin and the rules keep reloading each other.
+without `.zip`). After a successful call, keep the facts you sent in the
+`bundle_facts` cookie: the gateway then decides `index.html` from that cookie
+on the next visit, and the app only needs to call `/data` again when its facts
+changed (login, logout, a store switch, a new backend version). Skip it when
+the URL pins a bundle with `?bundle=`, or the pin and the rules keep
+reloading each other.
 
 ```ts
 const PIN = new URLSearchParams(location.search).has('bundle');
+const synced = () => decodeURIComponent(document.cookie.match(/(?:^|; )bundle_facts=([^;]*)/)?.[1] ?? '');
 
 export async function syncBundle(facts: Record<string, string | number | boolean>) {
-  if (PIN) return;
+  const body = JSON.stringify(Object.fromEntries(Object.entries(facts).sort()));
+  if (PIN || body === synced()) return; // index.html was already decided from the cookie
   const res = await fetch('/__gateway/data', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(facts),
+    body,
   }).catch(() => null);
   if (!res?.ok) return;
+  document.cookie = `bundle_facts=${encodeURIComponent(body)}; path=/; max-age=2592000; samesite=lax`;
   const { bundle } = await res.json();
   if (bundle === environment.version) return sessionStorage.removeItem('gw.target');
   if (sessionStorage.getItem('gw.target') === bundle) return; // one reload per target per tab
