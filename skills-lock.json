@@ -1,6 +1,24 @@
 {
   "version": 1,
   "skills": {
+    "codebase-refactoring": {
+      "source": "kucherenko/jscpd",
+      "sourceType": "github",
+      "skillPath": "skills/codebase-refactoring/SKILL.md",
+      "computedHash": "00b64acf996e8f42d248e0dbced3853a63b77c7967281d7a9845f1c2b301b24e"
+    },
+    "dry-refactoring": {
+      "source": "kucherenko/jscpd",
+      "sourceType": "github",
+      "skillPath": "skills/dry-refactoring/SKILL.md",
+      "computedHash": "d262aa0092b5a2384e97c4c4ee5f2e4262cf2602ea16f4fe1d3cbb17ecb9d2bd"
+    },
+    "jscpd": {
+      "source": "kucherenko/jscpd",
+      "sourceType": "github",
+      "skillPath": "skills/jscpd/SKILL.md",
+      "computedHash": "22c2e70c33fed2c1a3a245d4f08fd3d13888df2e7e472685abcc0b811a4c4558"
+    },
     "karpathy-guidelines": {
       "source": "forrestchang/andrej-karpathy-skills",
       "sourceType": "github",
