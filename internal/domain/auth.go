@@ -17,7 +17,6 @@ type Auth struct {
 	Hash     string `json:"-"`
 }
 
-// HashPassword returns pbkdf2-sha256$rounds$salt$key, all base64.
 func HashPassword(password string) string {
 	salt := make([]byte, 16)
 	_, _ = rand.Read(salt)

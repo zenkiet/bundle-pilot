@@ -22,7 +22,6 @@ import (
 	"github.com/zenkiet/bundle-pilot/internal/gen/configv1"
 	"github.com/zenkiet/bundle-pilot/internal/infrastructure/mirror"
 	"github.com/zenkiet/bundle-pilot/internal/infrastructure/mirror/s3"
-	"github.com/zenkiet/bundle-pilot/internal/pkg/asset"
 )
 
 const (
@@ -33,9 +32,8 @@ const (
 
 var errChanged = errors.New("zip changed while loading")
 
-// Source reads <root>/versions/<v>.zip and <root>/config.pb, and runs the mirror
-// the config's source block asks for. Load must not run concurrently; Stamp,
-// PutBundle and DeleteBundle may run alongside it.
+// Source reads DIST/versions/*.zip and DIST/config.pb and runs the configured
+// mirror. Load must not run concurrently; Stamp, PutBundle and DeleteBundle may.
 type Source struct {
 	fsys   fs.FS
 	dir    string
@@ -43,14 +41,15 @@ type Source struct {
 	key    ed25519.PublicKey
 	cache  map[string]entry
 	config domain.Config
+	good   bool
 	active domain.Source
 	mirror atomic.Pointer[mirror.Mirror]
 	stop   context.CancelFunc
 }
 
 type entry struct {
-	fp     uint64
-	bundle *domain.Bundle
+	fp uint64
+	zipped
 }
 
 type version struct {
@@ -60,12 +59,11 @@ type version struct {
 	fp         uint64
 }
 
-func New(fsys fs.FS, dir string, log *slog.Logger, key ed25519.PublicKey) *Source {
-	return &Source{fsys: fsys, dir: dir, log: log, key: key, cache: map[string]entry{}}
+func New(dir string, log *slog.Logger, key ed25519.PublicKey) *Source {
+	return &Source{fsys: os.DirFS(dir), dir: dir, log: log, key: key, cache: map[string]entry{}}
 }
 
-// Stamp hashes config.pb metadata and every zip's size and mtime, so a
-// rewritten file is noticed, not only a renamed one.
+// Stamp changes when config.pb or any zip changes size or mtime, or the mirror's state moves.
 func (s *Source) Stamp() uint64 {
 	h := fnv.New64a()
 	var b [8]byte
@@ -86,7 +84,10 @@ func (s *Source) Stamp() uint64 {
 
 func (s *Source) Load() (domain.Inventory, error) {
 	inv := domain.Inventory{Signed: s.key != nil}
-	inv.Config = s.loadConfig(&inv)
+	var err error
+	if inv.Config, err = s.loadConfig(&inv); err != nil {
+		return inv, err
+	}
 	if err := s.applySource(inv.Config.Source); err != nil {
 		inv.Errors = append(inv.Errors, "source "+inv.Config.Source.String()+": "+err.Error())
 	}
@@ -96,12 +97,6 @@ func (s *Source) Load() (domain.Inventory, error) {
 	vs, err := s.versions()
 	if err != nil {
 		return inv, cmp.Or(s.sourceErr(), err)
-	}
-	blobs := map[[32]byte]*asset.Blob{}
-	for _, e := range s.cache {
-		for _, a := range e.bundle.All() {
-			blobs[a.Blob().Sum()] = a.Blob()
-		}
 	}
 	next := make(map[string]entry, len(vs))
 	var stale []version
@@ -114,18 +109,14 @@ func (s *Source) Load() (domain.Inventory, error) {
 	}
 	if len(stale) > 0 {
 		start := time.Now()
-		bundles, errs := loadBundles(s.fsys, s.key, stale, blobs)
+		zs, errs := loadBundles(s.fsys, s.key, stale)
 		var loaded []string
 		for i, v := range stale {
-			err := errs[i]
-			if info, serr := fs.Stat(s.fsys, v.path); err == nil && (serr != nil || fingerprint(info) != v.fp) {
-				err = errChanged
-			}
-			if err != nil {
-				s.keepPrevious(&inv, next, v.name, err)
+			if errs[i] != nil {
+				s.keepPrevious(&inv, next, v.name, errs[i])
 				continue
 			}
-			next[v.name] = entry{v.fp, bundles[i]}
+			next[v.name] = entry{v.fp, zs[i]}
 			loaded = append(loaded, v.name)
 		}
 		if len(loaded) > 0 {
@@ -135,19 +126,16 @@ func (s *Source) Load() (domain.Inventory, error) {
 	for _, v := range vs {
 		if e, ok := next[v.name]; ok {
 			inv.Bundles = append(inv.Bundles, e.bundle)
+			inv.Issues = append(inv.Issues, e.issues...)
 		}
 	}
 	if len(next) > 0 {
 		s.cache = next
 	}
-	if len(inv.Bundles) == 0 {
-		return inv, s.sourceErr()
-	}
 	return inv, nil
 }
 
-// sourceErr is the mirror's last failure: when nothing loads, that is the
-// cause worth showing rather than the empty directory.
+// sourceErr is the mirror's last failure, the cause worth showing when versions/ cannot be read.
 func (s *Source) sourceErr() error {
 	if m := s.mirror.Load(); m != nil {
 		if msg, _ := m.State(); msg != "" {
@@ -157,9 +145,8 @@ func (s *Source) sourceErr() error {
 	return nil
 }
 
-// applySource swaps the mirror when config.json changes where zips come
-// from. A new remote syncs once inline, so its zips are there for the load;
-// one that cannot be set up leaves the source local until the next reload.
+// applySource swaps the mirror when the source changes. A new remote syncs once
+// inline so the load sees its zips; one that fails to set up is retried next reload.
 func (s *Source) applySource(src domain.Source) error {
 	if src == s.active {
 		return nil
@@ -190,7 +177,7 @@ func (s *Source) applySource(src domain.Source) error {
 
 func (s *Source) keepPrevious(inv *domain.Inventory, next map[string]entry, name string, err error) {
 	inv.Retry = inv.Retry || !errors.Is(err, domain.ErrNoIndex)
-	if prev, ok := s.cache[name]; ok {
+	if prev, ok := s.cache[name]; ok && prev.intact() {
 		next[name] = prev
 		inv.Issues = append(inv.Issues, fmt.Sprintf("bundle %s: %v, keeping previous load", name, err))
 		return
@@ -198,19 +185,23 @@ func (s *Source) keepPrevious(inv *domain.Inventory, next map[string]entry, name
 	inv.Errors = append(inv.Errors, fmt.Sprintf("bundle %s skipped: %v", name, err))
 }
 
-// loadConfig keeps the last good config when the file is unreadable or invalid;
-// on a first boot that means an empty config, so everyone gets the default.
-func (s *Source) loadConfig(inv *domain.Inventory) domain.Config {
+// loadConfig keeps the last good config when the file is unreadable, invalid or
+// gone. Setup mode, with the admin API open, is only for a start without config.pb.
+func (s *Source) loadConfig(inv *domain.Inventory) (domain.Config, error) {
 	info, err := fs.Stat(s.fsys, configFile)
 	if errors.Is(err, fs.ErrNotExist) {
-		s.config = domain.Config{}
+		if s.good {
+			inv.Errors = append(inv.Errors, "config.pb missing, keeping the loaded config: restore it, or restart to run setup again")
+			return s.config, nil
+		}
+		s.config, _ = domain.ParseConfig(&configv1.Config{}) // the defaults, such as the date layout
 		inv.Setup = true
 		msg := "config.pb not found: no rules, every visitor gets the default bundle"
 		if _, err := fs.Stat(s.fsys, "config.json"); err == nil {
 			msg += "; convert config.json with: gateway import config.json"
 		}
 		inv.Issues = append(inv.Issues, msg)
-		return s.config
+		return s.config, nil
 	}
 	if err == nil && info.Size() > maxConfig {
 		err = errors.New("larger than 1 MiB")
@@ -220,8 +211,7 @@ func (s *Source) loadConfig(inv *domain.Inventory) domain.Config {
 		data, err = fs.ReadFile(s.fsys, configFile)
 	}
 	if err != nil {
-		inv.Errors = append(inv.Errors, "config.pb unreadable, keeping previous: "+err.Error())
-		return s.config
+		return s.keepConfig(inv, "unreadable", err)
 	}
 	pb, err := domain.DecodeConfig(data, false)
 	var c domain.Config
@@ -229,11 +219,19 @@ func (s *Source) loadConfig(inv *domain.Inventory) domain.Config {
 		c, err = domain.ParseConfig(pb)
 	}
 	if err != nil {
-		inv.Errors = append(inv.Errors, "config.pb rejected, keeping previous: "+err.Error())
-		return s.config
+		return s.keepConfig(inv, "rejected", err)
 	}
-	s.config = c
-	return c
+	s.config, s.good = c, true
+	return c, nil
+}
+
+// keepConfig falls back to the last good config, or fails when none has loaded.
+func (s *Source) keepConfig(inv *domain.Inventory, what string, err error) (domain.Config, error) {
+	if !s.good {
+		return domain.Config{}, fmt.Errorf("config.pb %s: %w (fix it, or remove it to run setup again)", what, err)
+	}
+	inv.Errors = append(inv.Errors, "config.pb "+what+", keeping previous: "+err.Error())
+	return s.config, nil
 }
 
 func (s *Source) ReadConfig() (*configv1.Config, error) {
@@ -264,8 +262,8 @@ func (s *Source) WriteConfig(pb *configv1.Config) error {
 	return root.Rename("."+configFile+".part", configFile)
 }
 
-// PutBundle stores <name>.zip once it proves loadable. A remote source gets it
-// first, and the local copy takes the store's mtime so the mirror keeps it.
+// PutBundle stores <name>.zip once it proves loadable. A remote source gets it first;
+// the local copy takes its mtime so the mirror keeps it.
 func (s *Source) PutBundle(ctx context.Context, name string, r io.Reader) (files int, replaced bool, err error) {
 	root, err := s.versionsRoot()
 	if err != nil {
@@ -289,16 +287,11 @@ func (s *Source) PutBundle(ctx context.Context, name string, r io.Reader) (files
 	if err != nil {
 		return 0, false, err
 	}
-	items, closer, err := open(s.fsys, version{name: name, path: path.Join(versionsDir, tmp), size: size})
-	if err != nil {
-		return 0, false, fmt.Errorf("not a zip: %w", err)
+	if f, err = root.Open(tmp); err != nil {
+		return 0, false, err
 	}
-	if items["/index.html"].open == nil {
-		err = domain.ErrNoIndex
-	} else if s.key != nil {
-		err = verify(s.key, items, nil, 0)
-	}
-	_ = closer.Close()
+	z, err := loadZip(f, s.key, name)
+	_ = f.Close()
 	if err != nil {
 		return 0, false, err
 	}
@@ -320,7 +313,17 @@ func (s *Source) PutBundle(ctx context.Context, name string, r io.Reader) (files
 	if err = root.Rename(tmp, name+".zip"); err != nil {
 		return 0, false, err
 	}
-	return len(items), statErr == nil, nil
+	return z.bundle.Len(), statErr == nil, nil
+}
+
+// OpenBundle opens a file of versions/ for download; the Root keeps name inside it.
+func (s *Source) OpenBundle(name string) (*os.File, error) {
+	root, err := os.OpenRoot(filepath.Join(s.dir, versionsDir))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	return root.Open(name)
 }
 
 func (s *Source) DeleteBundle(ctx context.Context, name string) error {
@@ -354,6 +357,9 @@ func (s *Source) versionsRoot() (*os.Root, error) {
 
 func (s *Source) versions() ([]version, error) {
 	entries, err := fs.ReadDir(s.fsys, versionsDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		_, err = fs.Stat(s.fsys, ".") // no versions/ yet is empty; no DIST at all is an error
+	}
 	if err != nil {
 		return nil, err
 	}

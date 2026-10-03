@@ -95,7 +95,7 @@ Three things decide, in this order:
 | **A first run that sets itself up** | Project name, admin password, bundle source and default build in five steps; the admin API is then protected by HTTP Basic auth. |
 | **Bundles from a folder or a bucket** | Point it at a directory, or at S3, Cloudflare R2, MinIO and the like, and it mirrors the zips by itself. |
 | **Signed bundles** | Optionally, so only builds signed with your key can serve. |
-| **One small binary** | No database, everything in RAM, roughly ten microseconds of CPU per request. Docker images for amd64 and arm64, binaries for macOS, Windows and Linux. |
+| **One small binary** | No database: zips are served in place from the page cache, a few MB of RAM whatever the number of versions, roughly ten microseconds of CPU per request. Docker images for amd64 and arm64, binaries for macOS, Windows and Linux. |
 
 ## Quick start
 

@@ -10,12 +10,8 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-// Compare orders versions with the Default date layout.
-func Compare(a, b string) int { return Default.Compare(a, b) }
-
-// Compare orders semantic versions (4.100.0 > 4.90.0, 1.0.0-rc.1 < 1.0.0)
-// and, when both sides are dates in l, compares them chronologically.
-// Anything else sorts below every version, and by text among themselves.
+// Compare orders two dates in l by day, else by semver (4.100.0 > 4.90.0,
+// 1.0.0-rc.1 < 1.0.0); anything else sorts below versions, by text.
 func (l Layout) Compare(a, b string) int {
 	if da := l.Date(a); da != 0 {
 		if db := l.Date(b); db != 0 {
@@ -37,9 +33,8 @@ const (
 	Dotted
 )
 
-// Kind classifies s as a calendar-valid date in l or a semantic version of up
-// to three numeric parts, with optional v, -prerelease and +build. A string
-// shaped like a date that does not exist, such as 02.30.2026, is Invalid.
+// Kind classifies s as a real date in l or a semantic version (optional v, -pre,
+// +build); a date-shaped non-date such as 02.30.2026 is Invalid.
 func (l Layout) Kind(s string) Kind {
 	if d, shaped := l.date(s); shaped {
 		if d == 0 {

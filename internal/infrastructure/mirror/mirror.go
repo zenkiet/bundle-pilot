@@ -76,8 +76,8 @@ func (m *Mirror) Status() (at time.Time, objects int, err string) {
 
 func (m *Mirror) Store() Store { return m.store }
 
-// Sync downloads new or changed zips through a temp file and deletes the ones
-// the store no longer lists. A failed listing changes nothing on disk.
+// Sync fetches new or changed zips and deletes those the store no longer lists;
+// a failed or empty listing changes nothing.
 func (m *Mirror) Sync(ctx context.Context) error {
 	n, err := m.sync(ctx)
 	msg := ""

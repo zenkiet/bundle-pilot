@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io/fs"
 	"net/http"
+	"path"
 	"strings"
 	"time"
 
@@ -12,17 +13,11 @@ import (
 
 const maxZip = 256 << 20
 
-// putBundle stores the raw body as versions/<name>.zip, replacing a zip of the
-// same name, and reloads before answering.
+// putBundle stores the body as versions/<name>.zip and reloads.
 func (rt *Router) putBundle(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	v, ok := strings.CutSuffix(name, ".zip")
-	layout := rt.cat.Current().Config.Dates
-	if layout.String() == "" {
-		layout = version.Default
-	}
-	if !ok || strings.HasPrefix(name, ".") || layout.Kind(v) == version.Invalid {
-		http.Error(w, "name must be <version>.zip, a version like 4.81.0 or a date like "+layout.String(), http.StatusBadRequest)
+	v, ok := rt.zipVersion(r.PathValue("name"))
+	if !ok {
+		http.Error(w, "name must be <version>.zip, a version like 4.81.0 or a date like "+rt.cat.Current().Config.Dates.String(), http.StatusBadRequest)
 		return
 	}
 	start := time.Now()
@@ -43,6 +38,53 @@ func (rt *Router) putBundle(w http.ResponseWriter, r *http.Request) {
 		Replaced bool   `json:"replaced"`
 		ReloadMs int64  `json:"reload_ms"`
 	}{v, files, replaced, time.Since(start).Milliseconds()})
+}
+
+// getBundle serves versions/<v>.zip, without auth: OTA updaters need its URL.
+func (rt *Router) getBundle(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if _, ok := rt.zipVersion(name); !ok {
+		http.NotFound(w, r)
+		return
+	}
+	f, err := rt.cat.OpenBundle(name)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Cache-Control", "no-cache")
+	extendDeadline(w, info.Size())
+	http.ServeContent(w, r, name, info.ModTime(), f)
+}
+
+// getBundleFile serves one file of a bundle as zipped, the raw index.html included, for OTA
+// updaters fetching what its signed bundle.sha256 lists: no cookies, no index fallback.
+func (rt *Router) getBundleFile(w http.ResponseWriter, r *http.Request) {
+	b := rt.cat.Current().Bundle(r.PathValue("version"))
+	if b == nil {
+		http.NotFound(w, r)
+		return
+	}
+	a := b.File(path.Clean("/" + r.PathValue("path")))
+	if a == nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header()["X-Bundle-Version"] = b.Tag()
+	extendDeadline(w, a.Size())
+	a.ServeHTTP(w, r)
+}
+
+func (rt *Router) zipVersion(name string) (string, bool) {
+	v, ok := strings.CutSuffix(name, ".zip")
+	return v, ok && !strings.HasPrefix(name, ".") && rt.cat.Current().Config.Dates.Kind(v) != version.Invalid
 }
 
 // deleteBundle refuses the default bundle so the gateway never runs out of bundles.

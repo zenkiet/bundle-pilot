@@ -80,8 +80,7 @@ func run(log *slog.Logger, lvl *slog.LevelVar) error {
 	return srv.Close()
 }
 
-// check loads a dist directory the way the server does, prints every issue,
-// and exits 1 when config.json is rejected or a bundle is refused.
+// check loads DIST the way the server does, prints every issue and exits 1 on any error.
 func check(args []string) int {
 	cfg, err := config.Load(os.Getenv)
 	if err != nil {
@@ -135,7 +134,7 @@ func importConfig(args []string) int {
 		_, err = domain.ParseConfig(pb)
 	}
 	if err == nil {
-		err = bundlefs.New(os.DirFS(cfg.Dist), cfg.Dist, slog.New(slog.DiscardHandler), nil).WriteConfig(pb)
+		err = bundlefs.New(cfg.Dist, slog.New(slog.DiscardHandler), nil).WriteConfig(pb)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -146,5 +145,5 @@ func importConfig(args []string) int {
 }
 
 func catalog(cfg config.Config, log *slog.Logger) *usecase.Catalog {
-	return usecase.NewCatalog(bundlefs.New(os.DirFS(cfg.Dist), cfg.Dist, log, cfg.BundleKey), log)
+	return usecase.NewCatalog(bundlefs.New(cfg.Dist, log, cfg.BundleKey), log)
 }

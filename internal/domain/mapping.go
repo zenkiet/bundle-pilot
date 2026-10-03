@@ -70,7 +70,7 @@ func (m Mapping) validate(l version.Layout, bundles map[string]*Bundle, now time
 		out = append(out, s)
 	}
 	for i := 1; i < len(out); i++ {
-		if version.Compare(out[i].Bundle, out[i-1].Bundle) < 0 {
+		if l.Compare(out[i].Bundle, out[i-1].Bundle) < 0 {
 			issues = append(issues, fmt.Sprintf("backend %s -> %s is older than backend %s -> %s",
 				out[i].Backend, out[i].Bundle, out[i-1].Backend, out[i-1].Bundle))
 		}

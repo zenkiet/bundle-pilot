@@ -19,8 +19,6 @@ type Router struct {
 	session   atomic.Pointer[session]
 }
 
-// New routes with a ServeMux: method patterns answer the wrong method with
-// 405 and Allow, and unclean paths are redirected.
 func New(cat *usecase.Catalog, ui fs.FS, log *slog.Logger) http.Handler {
 	rt := &Router{cat: cat, log: log, decisions: map[string]uint64{}}
 	mux := http.NewServeMux()
@@ -29,6 +27,8 @@ func New(cat *usecase.Catalog, ui fs.FS, log *slog.Logger) http.Handler {
 	mux.HandleFunc("GET /__gateway/status", rt.auth(rt.status))
 	mux.HandleFunc("GET /__gateway/config", rt.auth(rt.getConfig))
 	mux.HandleFunc("PUT /__gateway/config", rt.auth(rt.putConfig))
+	mux.HandleFunc("GET /__gateway/bundles/{name}", rt.getBundle)
+	mux.HandleFunc("GET /__gateway/bundles/{version}/{path...}", rt.getBundleFile)
 	mux.HandleFunc("PUT /__gateway/bundles/{name}", rt.auth(rt.putBundle))
 	mux.HandleFunc("DELETE /__gateway/bundles/{name}", rt.auth(rt.deleteBundle))
 	mux.HandleFunc("POST /__gateway/reload", rt.auth(rt.reload))
@@ -40,6 +40,10 @@ func New(cat *usecase.Catalog, ui fs.FS, log *slog.Logger) http.Handler {
 
 func (rt *Router) root(w http.ResponseWriter, r *http.Request) {
 	p, snap := r.URL.Path, rt.cat.Current()
+	if len(snap.Bundles()) == 0 {
+		http.Error(w, "no bundle deployed yet", http.StatusServiceUnavailable)
+		return
+	}
 	switch base := snap.BasePath; {
 	case strings.HasPrefix(p, base):
 		rt.static(w, r, snap, p[len(base)-1:])

@@ -1,6 +1,5 @@
-// Package s3 is the mirror.Store for any S3-compatible bucket, on
-// aws-sdk-go-v2. Without keys in config.json the SDK's credential chain
-// applies: environment, shared config, IAM role, IRSA, SSO.
+// Package s3 is the mirror.Store for S3-compatible buckets. Without keys in
+// config.pb the AWS credential chain applies (env, shared config, IAM role, IRSA, SSO).
 package s3
 
 import (

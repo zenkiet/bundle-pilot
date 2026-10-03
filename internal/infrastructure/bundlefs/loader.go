@@ -2,260 +2,274 @@ package bundlefs
 
 import (
 	"archive/zip"
+	"bufio"
 	"bytes"
-	"cmp"
+	"compress/flate"
 	"compress/gzip"
 	"crypto/ed25519"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"io/fs"
+	"os"
 	"path"
 	"runtime"
 	"slices"
 	"strings"
 	"sync"
 
+	"github.com/andybalholm/brotli"
 	"golang.org/x/net/html"
-	"golang.org/x/sync/errgroup"
 
 	"github.com/zenkiet/bundle-pilot/internal/domain"
 	"github.com/zenkiet/bundle-pilot/internal/pkg/asset"
 )
 
-var (
-	gzipMagic   = []byte{0x1f, 0x8b}
-	compressors = sync.Pool{New: func() any { return &compressor{zw: gzip.NewWriter(nil)} }}
-)
-
 const (
-	maxWorkers    = 8
 	manifestFile  = "/bundle.sha256"
 	signatureFile = "/bundle.sha256.sig"
+	maxKept       = 8 << 20
 )
 
-// item is one file of a bundle. gzip, when set, returns a gzip body built from
-// the zip's own deflate stream, so nothing is recompressed at load.
-type item struct {
-	size int64
-	open func() ([]byte, error)
-	gzip func() []byte
+var (
+	// kept are read into memory at load; every other byte is served from the zip.
+	kept = map[string]bool{"/index.html": true, "/ngsw.json": true, manifestFile: true, signatureFile: true}
+	// textual files deserve a .br sidecar: without one they go out as gzip at best.
+	textual = map[string]bool{".js": true, ".mjs": true, ".css": true, ".html": true, ".json": true, ".svg": true, ".txt": true}
+)
+
+// zipped is a loaded bundle, the open zip it serves from and that zip's state at load.
+type zipped struct {
+	bundle *domain.Bundle
+	f      *os.File
+	info   fs.FileInfo
+	issues []string
 }
 
-type task struct {
-	bundle int
-	rel    string
-	size   int64
-	sum    [32]byte
-	slot   *slot
-	err    error
+// intact reports the zip was not rewritten in place since it loaded: a rename or a delete
+// leaves the open file as it was, an in-place write would serve wrong bytes.
+func (z zipped) intact() bool {
+	info, err := z.f.Stat()
+	return err == nil && info.Size() == z.info.Size() && info.ModTime().Equal(z.info.ModTime())
 }
 
-type slot struct{ blob *asset.Blob }
-
-// loadBundles feeds every file of every version, largest first, to one worker
-// pool. The first worker to hash a content claims it and compresses it; later
-// copies only point at its slot, so identical files cost one read and one hash.
-func loadBundles(fsys fs.FS, pub ed25519.PublicKey, vs []version, known map[[32]byte]*asset.Blob) ([]*domain.Bundle, []error) {
-	errs := make([]error, len(vs))
-	items := make([]map[string]item, len(vs))
-	files := make([]map[string]*asset.Asset, len(vs))
-	var tasks []*task
+// loadBundles loads the zips side by side. A loaded zip stays open, owned by its bundle, and
+// closes when its last snapshot is collected.
+func loadBundles(fsys fs.FS, pub ed25519.PublicKey, vs []version) ([]zipped, []error) {
+	out, errs := make([]zipped, len(vs)), make([]error, len(vs))
+	slots := make(chan struct{}, runtime.GOMAXPROCS(0))
+	var wg sync.WaitGroup
 	for i, v := range vs {
-		var closer io.Closer
-		if items[i], closer, errs[i] = open(fsys, v); closer != nil {
-			defer func() { _ = closer.Close() }()
-		}
-		if errs[i] == nil && items[i]["/index.html"].open == nil {
-			errs[i] = domain.ErrNoIndex
-		}
-		if errs[i] != nil {
-			continue
-		}
-		files[i] = map[string]*asset.Asset{}
-		for rel, it := range items[i] {
-			if !sidecar(rel, items[i]) {
-				tasks = append(tasks, &task{bundle: i, rel: rel, size: it.size})
-			}
-		}
-	}
-	slices.SortFunc(tasks, func(a, b *task) int { return cmp.Compare(b.size, a.size) })
-
-	var mu sync.Mutex
-	slots := make(map[[32]byte]*slot, len(known)+len(tasks))
-	for sum, b := range known {
-		slots[sum] = &slot{b}
-	}
-	var g errgroup.Group
-	g.SetLimit(min(runtime.GOMAXPROCS(0), maxWorkers))
-	for _, t := range tasks {
-		g.Go(func() error {
-			its := items[t.bundle]
-			it := its[t.rel]
-			body, err := it.open()
+		wg.Go(func() {
+			slots <- struct{}{}
+			defer func() { <-slots }()
+			f, err := fsys.Open(v.path)
 			if err != nil {
-				t.err = err
-				return nil
+				errs[i] = err
+				return
 			}
-			t.sum = sha256.Sum256(body)
-			var gz, br []byte
-			if side, ok := its[t.rel+".gz"]; ok {
-				if gz, _ = side.open(); !bytes.HasPrefix(gz, gzipMagic) {
-					gz = nil
-				}
+			osf, ok := f.(*os.File)
+			if !ok {
+				_ = f.Close()
+				errs[i] = errors.New("zips must be files on disk")
+				return
 			}
-			if side, ok := its[t.rel+".br"]; ok {
-				br, _ = side.open()
+			if out[i], errs[i] = loadZip(osf, pub, v.name); errs[i] != nil {
+				_ = osf.Close()
 			}
-			// A zip's own stream is just another encoding of the same bytes, so it
-			// stays out of the key: zips built at different levels still share a blob.
-			key := contentKey(t.sum, gz, br)
-			if gz == nil && it.gzip != nil {
-				gz = it.gzip()
-			}
-			mu.Lock()
-			s, seen := slots[key]
-			if !seen {
-				s = &slot{}
-				slots[key] = s
-			}
-			mu.Unlock()
-			if t.slot = s; seen {
-				return nil
-			}
-			if gz == nil && asset.Compressible(t.rel, body) {
-				z := compressors.Get().(*compressor)
-				gz = z.gzip(body)
-				compressors.Put(z)
-			}
-			s.blob = asset.NewBlob(key, body, gz, br)
-			return nil
 		})
 	}
-	_ = g.Wait()
-
-	for _, t := range tasks {
-		switch {
-		case errs[t.bundle] != nil:
-		case t.err != nil:
-			errs[t.bundle] = t.err
-		default:
-			files[t.bundle][t.rel] = asset.New(t.rel, t.slot.blob)
-		}
-	}
-	bundles := make([]*domain.Bundle, len(vs))
-	for i, v := range vs {
-		if errs[i] != nil {
-			continue
-		}
-		if pub != nil {
-			if errs[i] = verify(pub, items[i], tasks, i); errs[i] != nil {
-				continue
-			}
-		}
-		base, link := indexMeta(files[i]["/index.html"].Body())
-		if bundles[i], errs[i] = domain.NewBundle(v.name, base, files[i]); errs[i] == nil {
-			bundles[i].ZipBytes, bundles[i].ModTime, bundles[i].Link = v.size, v.mtime, link
-		}
-	}
-	return bundles, errs
+	wg.Wait()
+	return out, errs
 }
 
-// open lists a zip's entries and reads them straight from the archive, which
-// stays open until the load finishes; directory and dot entries are skipped.
-func open(fsys fs.FS, v version) (map[string]item, io.Closer, error) {
-	f, err := fsys.Open(v.path)
+// loadZip serves a zip in place. One pass over every entry checks CRC-32 and size against
+// the central directory and takes the SHA-256 the ETag and the signature need, keeping no
+// bytes; only index.html, stamped with the version, and ngsw.json are held in memory.
+func loadZip(f *os.File, pub ed25519.PublicKey, name string) (zipped, error) {
+	info, err := f.Stat()
 	if err != nil {
-		return nil, nil, err
+		return zipped{}, err
 	}
-	ra, ok := f.(io.ReaderAt)
-	if !ok {
-		err = errors.New("zip needs random access")
-	}
-	var zr *zip.Reader
-	if err == nil {
-		zr, err = zip.NewReader(ra, v.size)
-	}
+	zr, err := zip.NewReader(f, info.Size())
 	if err != nil {
-		_ = f.Close()
-		return nil, nil, err
+		return zipped{}, err
 	}
-	items := make(map[string]item, len(zr.File))
+	files, err := scan(f, zr, info.Size())
+	if err != nil {
+		return zipped{}, err
+	}
+	index := files["/index.html"]
+	if index == nil {
+		return zipped{}, domain.ErrNoIndex
+	}
+	if pub != nil {
+		if err := verify(pub, files); err != nil {
+			return zipped{}, err
+		}
+	}
+	z := zipped{f: f, info: info}
+	assets := make(map[string]*asset.Asset, len(files))
+	dec := brotli.NewReader(nil) // reused: a fresh decoder per sidecar doubles the garbage
+	bare := 0
+	for rel, s := range files {
+		if base, ok := strings.CutSuffix(rel, ".br"); ok && files[base] != nil {
+			continue // a sidecar: the br encoding of base
+		}
+		var br *asset.Span
+		if side := files[rel+".br"]; side != nil {
+			if sum, err := decodedSum(dec, f, side, s.Size); err == nil && sum == s.sum {
+				br = &side.Span
+			} else {
+				z.issues = append(z.issues, fmt.Sprintf("bundle %s: %s.br does not decode to %[2]s, ignored", name, rel[1:]))
+			}
+		}
+		if br == nil && textual[path.Ext(rel)] && s.Size > 1<<10 && rel != "/index.html" {
+			bare++
+		}
+		assets[rel] = asset.FromZip(rel, f, s.Span, s.sum, s.head, br)
+	}
+	if bare > 0 {
+		z.issues = append(z.issues, fmt.Sprintf("bundle %s: %d text files have no .br, so they go out as gzip: precompress them in CI", name, bare))
+	}
+	if ngsw := files["/ngsw.json"]; ngsw != nil {
+		assets["/ngsw.json"] = asset.New("/ngsw.json", ngsw.body, gzipped(ngsw.body))
+	}
+	base, link := indexMeta(index.body)
+	if z.bundle, err = domain.NewBundle(name, base, assets, stamp(index.body, name)); err != nil {
+		return zipped{}, err
+	}
+	z.bundle.ZipBytes, z.bundle.ModTime, z.bundle.Link = info.Size(), info.ModTime(), link
+	if !z.intact() {
+		return zipped{}, errChanged
+	}
+	return z, nil
+}
+
+// scanned is a zip entry checked at load.
+type scanned struct {
+	asset.Span
+	sum  [32]byte
+	head []byte
+	body []byte
+}
+
+// scan reads every entry once and refuses what cannot be served in place safely: other
+// methods, encryption, symlinks, duplicates, spans outside the file and zip bombs.
+func scan(f *os.File, zr *zip.Reader, size int64) (map[string]*scanned, error) {
+	files := make(map[string]*scanned, len(zr.File))
+	var total uint64
 	for _, zf := range zr.File {
 		rel := path.Clean("/" + zf.Name)
 		if strings.HasSuffix(zf.Name, "/") || strings.Contains(rel, "/.") {
 			continue
 		}
-		it := item{size: int64(zf.UncompressedSize64), open: func() ([]byte, error) {
-			rc, err := zf.Open()
-			if err != nil {
-				return nil, err
-			}
-			b, err := io.ReadAll(rc)
-			_ = rc.Close()
-			return b, err
-		}}
-		if zf.Method == zip.Deflate {
-			it.gzip = func() []byte {
-				r, err := zf.OpenRaw()
-				if err != nil {
-					return nil
-				}
-				raw, err := io.ReadAll(r)
-				if err != nil {
-					return nil
-				}
-				return gzipFrame(raw, zf.CRC32, zf.UncompressedSize64)
-			}
+		off, err := zf.DataOffset()
+		raw, n := int64(zf.CompressedSize64), int64(zf.UncompressedSize64)
+		total += zf.UncompressedSize64
+		switch {
+		case zf.Method != zip.Store && zf.Method != zip.Deflate:
+			return nil, fmt.Errorf("%s: compression method %d, want stored or deflated", rel, zf.Method)
+		case zf.Flags&1 != 0 || zf.Mode()&fs.ModeSymlink != 0:
+			return nil, fmt.Errorf("%s: encrypted entries and symlinks are refused", rel)
+		case files[rel] != nil:
+			return nil, fmt.Errorf("%s is zipped twice", rel)
+		case total > 64*uint64(size):
+			return nil, errors.New("expands to more than 64 times its size")
+		case err != nil || off < 0 || off+raw > size || zf.Method == zip.Store && raw != n:
+			return nil, fmt.Errorf("%s: entry outside the zip", rel)
 		}
-		items[rel] = it
+		s := &scanned{Span: asset.Span{Off: off, Raw: raw, Size: n, CRC: zf.CRC32, Deflate: zf.Method == zip.Deflate}}
+		if err := s.read(f, kept[rel]); err != nil {
+			return nil, fmt.Errorf("%s: %w", rel, err)
+		}
+		files[rel] = s
 	}
-	return items, f, nil
+	return files, nil
 }
 
-// gzipFrame wraps a raw deflate stream as gzip; zip and gzip share the CRC-32
-// of the uncompressed data.
-func gzipFrame(raw []byte, crc uint32, size uint64) []byte {
-	b := make([]byte, 0, len(raw)+18)
-	b = append(b, 0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0xff)
-	b = append(b, raw...)
-	b = binary.LittleEndian.AppendUint32(b, crc)
-	return binary.LittleEndian.AppendUint32(b, uint32(size))
+// read decodes the entry once. A deflate stream that ends short of its span cannot be framed
+// as gzip, so that entry only goes out inflated.
+func (s *scanned) read(ra io.ReaderAt, keep bool) error {
+	if keep && s.Size > maxKept {
+		return fmt.Errorf("larger than %d MiB", maxKept>>20)
+	}
+	in := &counter{r: io.NewSectionReader(ra, s.Off, s.Raw)}
+	buf := bufio.NewReader(in)
+	var r io.Reader = buf
+	if s.Deflate {
+		r = flate.NewReader(buf)
+	}
+	sum, crc, head := sha256.New(), crc32.NewIEEE(), &prefix{}
+	w := io.MultiWriter(sum, crc, head)
+	var body bytes.Buffer
+	if keep {
+		w = io.MultiWriter(w, &body)
+	}
+	n, err := io.Copy(w, io.LimitReader(r, s.Size+1))
+	switch {
+	case err != nil:
+		return err
+	case n != s.Size || crc.Sum32() != s.CRC:
+		return errors.New("checksum mismatch, the zip is damaged")
+	}
+	s.sum, s.head, s.body = [32]byte(sum.Sum(nil)), *head, body.Bytes()
+	s.Framable = s.Deflate && in.n-int64(buf.Buffered()) == s.Raw
+	return nil
 }
 
-// verify checks bundle.sha256 (sha256sum format) against every loaded file
-// and its Ed25519 signature in bundle.sha256.sig against pub.
-func verify(pub ed25519.PublicKey, items map[string]item, tasks []*task, bundle int) error {
-	m, ok := items[manifestFile]
-	sg, ok2 := items[signatureFile]
-	if !ok || !ok2 {
+// decodedSum hashes a .br sidecar once decompressed, so it pairs only with the file it encodes.
+func decodedSum(dec *brotli.Reader, ra io.ReaderAt, s *scanned, limit int64) ([32]byte, error) {
+	r := s.Open(ra)
+	defer func() { _ = r.Close() }()
+	if err := dec.Reset(r); err != nil {
+		return [32]byte{}, err
+	}
+	h := sha256.New()
+	_, err := io.Copy(h, io.LimitReader(dec, limit+1))
+	return [32]byte(h.Sum(nil)), err
+}
+
+type counter struct {
+	r io.Reader
+	n int64
+}
+
+func (c *counter) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
+}
+
+// prefix keeps the first 512 bytes written, enough to sniff a content type.
+type prefix []byte
+
+func (p *prefix) Write(b []byte) (int, error) {
+	if n := 512 - len(*p); n > 0 {
+		*p = append(*p, b[:min(n, len(b))]...)
+	}
+	return len(b), nil
+}
+
+// verify checks bundle.sha256 (sha256sum format) against the scanned files and its Ed25519
+// signature in bundle.sha256.sig against pub.
+func verify(pub ed25519.PublicKey, files map[string]*scanned) error {
+	m, sg := files[manifestFile], files[signatureFile]
+	if m == nil || sg == nil {
 		return errors.New("bundle.sha256 and bundle.sha256.sig are required")
 	}
-	text, err := m.open()
-	if err != nil {
-		return err
-	}
-	sig, err := sg.open()
-	if err != nil {
-		return err
-	}
+	sig := sg.body
 	if hx := strings.TrimSpace(string(sig)); len(hx) == 2*ed25519.SignatureSize {
 		sig, _ = hex.DecodeString(hx)
 	}
-	if !ed25519.Verify(pub, text, sig) {
+	if !ed25519.Verify(pub, m.body, sig) {
 		return errors.New("bundle.sha256.sig does not match bundle.sha256")
 	}
-	sums := map[string][32]byte{}
-	for _, t := range tasks {
-		if t.bundle == bundle {
-			sums[t.rel] = t.sum
-		}
-	}
 	listed := map[string]bool{manifestFile: true, signatureFile: true}
-	for line := range strings.Lines(string(text)) {
+	for line := range strings.Lines(string(m.body)) {
 		if line = strings.TrimSpace(line); line == "" {
 			continue
 		}
@@ -265,24 +279,15 @@ func verify(pub ed25519.PublicKey, items map[string]item, tasks []*task, bundle 
 			return fmt.Errorf("bundle.sha256: bad line %q", line)
 		}
 		rel := path.Clean("/" + strings.TrimPrefix(strings.TrimLeft(name, " *"), "./"))
-		got, ok := sums[rel]
-		if !ok {
-			it, ok := items[rel]
-			if !ok {
-				return fmt.Errorf("%s is listed in bundle.sha256 but missing", rel)
-			}
-			b, err := it.open()
-			if err != nil {
-				return err
-			}
-			got = sha256.Sum256(b)
-		}
-		if got != [sha256.Size]byte(want) {
+		switch s := files[rel]; {
+		case s == nil:
+			return fmt.Errorf("%s is listed in bundle.sha256 but missing", rel)
+		case s.sum != [sha256.Size]byte(want):
 			return fmt.Errorf("%s does not match bundle.sha256", rel)
 		}
 		listed[rel] = true
 	}
-	for rel := range items {
+	for rel := range files {
 		if !listed[rel] {
 			return fmt.Errorf("%s is not listed in bundle.sha256", rel)
 		}
@@ -290,50 +295,29 @@ func verify(pub ed25519.PublicKey, items map[string]item, tasks []*task, bundle 
 	return nil
 }
 
-// contentKey identifies a blob by its body and any precompressed sidecars, so a
-// sidecar added or fixed later yields a new blob instead of reusing a stale one.
-func contentKey(sum [32]byte, gz, br []byte) [32]byte {
-	if gz == nil && br == nil {
-		return sum
-	}
-	h := sha256.New()
-	_, _ = h.Write(sum[:])
-	for _, enc := range [...][]byte{gz, br} {
-		es := sha256.Sum256(enc)
-		_, _ = h.Write(es[:])
-	}
-	h.Sum(sum[:0])
-	return sum
-}
-
-func sidecar(rel string, items map[string]item) bool {
-	for _, ext := range [...]string{".gz", ".br"} {
-		if base, ok := strings.CutSuffix(rel, ext); ok {
-			if _, ok := items[base]; ok {
-				return true
-			}
+// stamp puts <meta name="bundle-pilot:bundle"> in <head>, so the app knows its version; the
+// zip keeps the raw page OTA manifests hash. gzip only: the page revalidates, so br would
+// save ~2.5 KB once per release.
+func stamp(index []byte, version string) *asset.Asset {
+	if i := bytes.Index(index, []byte("<head")); i >= 0 {
+		if n := bytes.IndexByte(index[i:], '>'); n >= 0 {
+			i += n + 1
+			index = slices.Concat(index[:i], []byte(`<meta name="bundle-pilot:bundle" content="`+html.EscapeString(version)+`">`), index[i:])
 		}
 	}
-	return false
+	return asset.New("/index.html", index, gzipped(index))
 }
 
-type compressor struct {
-	buf bytes.Buffer
-	zw  *gzip.Writer
+func gzipped(b []byte) []byte {
+	var buf bytes.Buffer
+	zw, _ := gzip.NewWriterLevel(&buf, gzip.BestCompression)
+	_, _ = zw.Write(b)
+	_ = zw.Close()
+	return buf.Bytes()
 }
 
-func (z *compressor) gzip(body []byte) []byte {
-	z.buf.Reset()
-	z.zw.Reset(&z.buf)
-	if _, err := z.zw.Write(body); err != nil || z.zw.Close() != nil {
-		return nil
-	}
-	return bytes.Clone(z.buf.Bytes())
-}
-
-// baseHrefOf reads <base href> from index.html; without one the app mounts at /.
-// indexMeta reads <base href> and what index.html preloads (module scripts,
-// modulepreload links, stylesheets), joined as a Link header value.
+// indexMeta reads <base href> ("/" without one) and a Link header preloading up to
+// 12 module scripts, modulepreloads and stylesheets.
 func indexMeta(index []byte) (base, link string) {
 	base = "/"
 	var links []string
@@ -374,11 +358,12 @@ func indexMeta(index []byte) (base, link string) {
 			}
 		}
 	}
-	for i, l := range links[:min(len(links), 12)] {
+	links = links[:min(len(links), 12)]
+	for i, l := range links {
 		if !strings.HasPrefix(l, "/") && !strings.Contains(l, "://") {
 			l = strings.TrimSuffix(base, "/") + "/" + l
 		}
 		links[i] = "<" + l
 	}
-	return base, strings.Join(links[:min(len(links), 12)], ", ")
+	return base, strings.Join(links, ", ")
 }

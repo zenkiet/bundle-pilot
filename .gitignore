@@ -39,3 +39,7 @@ internal/ui/build/*
 !internal/ui/build/.gitkeep
 node_modules/
 release/
+
+# signing keys and the OTA gateway data dir stay out of git
+*.pem
+data/

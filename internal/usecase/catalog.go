@@ -2,12 +2,11 @@ package usecase
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"runtime/debug"
 	"slices"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -23,6 +22,7 @@ type Source interface {
 	WriteConfig(*configv1.Config) error
 	PutBundle(ctx context.Context, name string, r io.Reader) (files int, replaced bool, err error)
 	DeleteBundle(ctx context.Context, name string) error
+	OpenBundle(name string) (*os.File, error)
 	SyncState() (at time.Time, objects int, err string)
 }
 
@@ -52,7 +52,6 @@ func (c *Catalog) Stats() (reloads uint64, lastErr string) {
 
 func (c *Catalog) Config() (*configv1.Config, error) { return c.src.ReadConfig() }
 
-// SaveConfig writes config.pb and reloads, so the caller sees the outcome.
 func (c *Catalog) SaveConfig(pb *configv1.Config) error {
 	if err := c.src.WriteConfig(pb); err != nil {
 		return err
@@ -75,6 +74,8 @@ func (c *Catalog) DeleteBundle(ctx context.Context, name string) error {
 	}
 	return c.Reload()
 }
+
+func (c *Catalog) OpenBundle(name string) (*os.File, error) { return c.src.OpenBundle(name) }
 
 func (c *Catalog) SyncState() (at time.Time, objects int, err string) { return c.src.SyncState() }
 
@@ -102,14 +103,17 @@ func (c *Catalog) reload() error {
 	if err != nil {
 		return err
 	}
-	snap, err := domain.NewSnapshot(inv, time.Now())
-	if err != nil {
-		if all := slices.Concat(inv.Errors, inv.Issues); len(all) > 0 {
-			return fmt.Errorf("%w: %s", err, strings.Join(all, "; "))
+	prev, keep := c.cur.Load(), ""
+	if prev != nil {
+		keep = prev.Default.Version
+		// Zips that vanish keep serving from their open files; the new config still applies.
+		if len(inv.Bundles) == 0 && len(prev.Bundles()) > 0 {
+			inv.Bundles = prev.Bundles()
+			inv.Errors = append(inv.Errors, "no bundles in versions/: serving the ones loaded before")
 		}
-		return err
 	}
-	prev := c.cur.Swap(snap)
+	snap := domain.NewSnapshot(inv, time.Now(), keep)
+	c.cur.Store(snap)
 	for _, e := range snap.Errors {
 		c.log.Error(e)
 	}
@@ -124,7 +128,7 @@ func (c *Catalog) reload() error {
 		"base_path", snap.BasePath, "rules", len(snap.Config.Rules), "steps", len(snap.Config.Backend),
 		"took", time.Since(start).Round(time.Millisecond).String())
 	if prev == nil || !slices.Equal(prev.Bundles(), snap.Bundles()) {
-		debug.FreeOSMemory()
+		debug.FreeOSMemory() // checking zips leaves tens of MiB of decoder garbage behind
 	}
 	return nil
 }

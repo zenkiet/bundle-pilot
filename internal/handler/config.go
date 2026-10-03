@@ -18,8 +18,7 @@ const (
 	maskedSecret = "***"
 )
 
-// getConfig serves the stored config.pb, binary for protobuf clients and JSON
-// otherwise, with the S3 secret masked.
+// getConfig serves config.pb as protobuf or JSON, with secrets masked.
 func (rt *Router) getConfig(w http.ResponseWriter, r *http.Request) {
 	pb, err := rt.cat.Config()
 	if err != nil {
@@ -44,9 +43,9 @@ func (rt *Router) getConfig(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(b)
 }
 
-// putConfig validates the posted config (protobuf or JSON) against the loaded
-// bundles and, unless X-Dry-Run is set, stores it and reloads. A masked secret
-// keeps the stored one.
+// putConfig validates the posted config against the loaded bundles and, unless
+// X-Dry-Run is set, stores it. A masked secret keeps the stored one, or is
+// rejected when none is stored.
 func (rt *Router) putConfig(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxConfig))
 	if err != nil {
@@ -60,11 +59,11 @@ func (rt *Router) putConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cur, _ := rt.cat.Config()
-	if pb.Source != nil && pb.Source.SecretAccessKey == maskedSecret && cur != nil && cur.Source != nil {
-		pb.Source.SecretAccessKey = cur.Source.SecretAccessKey
+	if pb.GetSource().GetSecretAccessKey() == maskedSecret {
+		pb.Source.SecretAccessKey = cur.GetSource().GetSecretAccessKey()
 	}
-	if pb.Auth != nil && pb.Auth.PasswordHash == maskedSecret && cur != nil && cur.Auth != nil {
-		pb.Auth.PasswordHash = cur.Auth.PasswordHash
+	if pb.GetAuth().GetPasswordHash() == maskedSecret {
+		pb.Auth.PasswordHash = cur.GetAuth().GetPasswordHash()
 	}
 	out := struct {
 		Saved  bool     `json:"saved"`
@@ -73,10 +72,9 @@ func (rt *Router) putConfig(w http.ResponseWriter, r *http.Request) {
 	}{}
 	if c, err := domain.ParseConfig(pb); err != nil {
 		out.Errors = append(out.Errors, err.Error())
-	} else if dry, err := domain.NewSnapshot(domain.Inventory{Bundles: rt.cat.Current().Bundles(), Config: c}, time.Now()); err != nil {
-		out.Errors = append(out.Errors, err.Error())
 	} else {
-		out.Issues = dry.Issues
+		snap := rt.cat.Current()
+		out.Issues = domain.NewSnapshot(domain.Inventory{Bundles: snap.Bundles(), Config: c}, time.Now(), snap.Default.Version).Issues
 	}
 	if len(out.Errors) == 0 && r.Header.Get("X-Dry-Run") == "" {
 		if err := rt.cat.SaveConfig(pb); err != nil {

@@ -3,6 +3,7 @@ module github.com/zenkiet/bundle-pilot
 go 1.27.1
 
 require (
+	github.com/andybalholm/brotli v1.2.6
 	github.com/aws/aws-sdk-go-v2 v1.47.1
 	github.com/aws/aws-sdk-go-v2/config v1.33.6
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.6
@@ -10,7 +11,6 @@ require (
 	github.com/aws/smithy-go v1.28.2
 	golang.org/x/mod v0.41.0
 	golang.org/x/net v0.59.0
-	golang.org/x/sync v0.23.0
 	google.golang.org/protobuf v1.36.12
 )
 

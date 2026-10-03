@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"bytes"
 	"net/http"
 	"path"
 	"strings"
@@ -11,12 +10,17 @@ import (
 	"github.com/zenkiet/bundle-pilot/internal/pkg/asset"
 )
 
-// Large files get a write deadline scaled to their size, so slow clients can
-// finish them while the server-wide WriteTimeout still bounds everything else.
 const (
 	largeBody = 1 << 20
 	minRate   = 16 << 10
 )
+
+// extendDeadline lets slow clients finish a large body; WriteTimeout still bounds the rest.
+func extendDeadline(w http.ResponseWriter, n int64) {
+	if n > largeBody {
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(time.Minute + time.Duration(n/minRate)*time.Second))
+	}
+}
 
 func (rt *Router) static(w http.ResponseWriter, r *http.Request, snap *domain.Snapshot, rel string) {
 	query, cookie := r.URL.Query().Get(cookieName), cookieValue(r, cookieName)
@@ -40,44 +44,20 @@ func (rt *Router) static(w http.ResponseWriter, r *http.Request, snap *domain.Sn
 	if query == b.Version && query != cookie && !a.Immutable() && r.Header.Get("Sec-Fetch-Site") != "cross-site" {
 		setBundle(w, r, b.Version, cookieAge, cur.Version != b.Version)
 	}
-	if n := len(a.Body()); n > largeBody {
-		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(time.Minute + time.Duration(n/minRate)*time.Second))
-	}
+	extendDeadline(w, a.Size())
 	w.Header()["X-Bundle-Version"] = owner.Tag()
-	switch {
-	case rel == "/ngsw.json":
-		serveManifest(w, r, a)
-	case a == b.Index():
-		serveIndex(w, r, b)
-	default:
-		a.ServeHTTP(w, r)
-	}
-}
-
-// serveIndex stamps <meta name="bundle-pilot:bundle"> into <head>, so the app
-// learns the version it runs as without a build-time copy of the zip name.
-func serveIndex(w http.ResponseWriter, r *http.Request, b *domain.Bundle) {
-	a, version := b.Index(), b.Version
-	if b.Link != "" {
+	if a == b.Index() && b.Link != "" {
 		w.Header().Set("Link", b.Link)
 	}
-	body := a.Body()
-	i := bytes.Index(body, []byte("<head"))
-	if i >= 0 {
-		if n := bytes.IndexByte(body[i:], '>'); n >= 0 {
-			i += n + 1
-		} else {
-			i = -1
-		}
-	}
-	if i < 0 {
-		a.ServeHTTP(w, r)
+	if rel == "/ngsw.json" {
+		serveManifest(w, r, a)
 		return
 	}
-	etag := strings.TrimSuffix(a.ETag(), `"`) + "-" + version + `"`
-	a.ServeParts(w, r, etag, append(body[:i:i], `<meta name="bundle-pilot:bundle" content="`+version+`">`...), body[i:])
+	a.ServeHTTP(w, r)
 }
 
+// serveManifest stamps ngsw.json with the bundle_rev cookie, so the service worker
+// sees every bundle switch as an update, even back to a version it knows.
 func serveManifest(w http.ResponseWriter, r *http.Request, a *asset.Asset) {
 	body := a.Body()
 	if len(body) == 0 || body[0] != '{' {

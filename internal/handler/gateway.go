@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"runtime/debug"
+	"runtime/metrics"
 	"time"
 
 	"github.com/zenkiet/bundle-pilot/internal/domain"
@@ -17,12 +18,15 @@ const maxFactsBody = 4 << 10
 
 var crossOrigin = http.NewCrossOriginProtection()
 
-// data decides the bundle from the facts the frontend posts and pins it in the
-// cookie; a default decision clears the cookie so later default changes apply.
-// X-Dry-Run answers without touching cookies or counters.
+// data decides the bundle for the posted facts and applies it; X-Dry-Run only answers.
 func (rt *Router) data(w http.ResponseWriter, r *http.Request) {
 	if err := crossOrigin.Check(r); err != nil {
 		http.Error(w, "cross-origin request refused", http.StatusForbidden)
+		return
+	}
+	snap := rt.cat.Current()
+	if len(snap.Bundles()) == 0 {
+		http.Error(w, "no bundle deployed yet", http.StatusServiceUnavailable)
 		return
 	}
 	if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != "application/json" {
@@ -39,7 +43,6 @@ func (rt *Router) data(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	snap := rt.cat.Current()
 	b, via, err := snap.Decide(facts, time.Now())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -94,7 +97,7 @@ func cookieFacts(r *http.Request) domain.Facts {
 type bundleStatus struct {
 	Version  string    `json:"version"`
 	Files    int       `json:"files"`
-	Bytes    int       `json:"bytes"`
+	Bytes    int64     `json:"bytes"`
 	ZipBytes int64     `json:"zip_bytes"`
 	ModTime  time.Time `json:"mod_time"`
 }
@@ -138,15 +141,18 @@ func (rt *Router) status(w http.ResponseWriter, _ *http.Request) {
 		Reloads     uint64            `json:"reloads"`
 		LastError   string            `json:"last_error"`
 		Errors      []string          `json:"errors"`
-		Resident    int               `json:"resident_bytes"`
+		Resident    uint64            `json:"resident_bytes"`
 		Bundles     []bundleStatus    `json:"bundles"`
 		Rules       []domain.Rule     `json:"rules"`
 		Backend     domain.Mapping    `json:"backend"`
 		Decisions   map[string]uint64 `json:"decisions"`
 		Issues      []string          `json:"issues"`
 	}{
-		build, started, snap.Config.Project, snap.Config.Environment, snap.Setup, snap.Config.Auth.Hash != "", snap.Default.Version, snap.DefaultFrom, snap.BasePath, snap.Config.Source.String(), nil, snap.Signed, snap.LoadedAt, reloads, lastErr, snap.Errors,
-		snap.Resident, nil, snap.Config.Rules, snap.Config.Backend, decisions, snap.Issues,
+		Version: build, StartedAt: started, Project: snap.Config.Project, Environment: snap.Config.Environment,
+		Setup: snap.Setup, Auth: snap.Config.Auth.Hash != "", Default: snap.Default.Version, DefaultFrom: snap.DefaultFrom,
+		BasePath: snap.BasePath, Source: snap.Config.Source.String(), Signing: snap.Signed, LoadedAt: snap.LoadedAt,
+		Reloads: reloads, LastError: lastErr, Errors: snap.Errors, Resident: resident(),
+		Rules: snap.Config.Rules, Backend: snap.Config.Backend, Decisions: decisions, Issues: snap.Issues,
 	}
 	if at, n, syncErr := rt.cat.SyncState(); !at.IsZero() {
 		out.Sync = &syncStatus{at, n, syncErr}
@@ -155,6 +161,13 @@ func (rt *Router) status(w http.ResponseWriter, _ *http.Request) {
 		out.Bundles = append(out.Bundles, bundleStatus{b.Version, b.Len(), b.Bytes(), b.ZipBytes, b.ModTime})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// resident is the memory the Go runtime holds from the OS; bundle bytes live in the page cache.
+func resident() uint64 {
+	s := []metrics.Sample{{Name: "/memory/classes/total:bytes"}, {Name: "/memory/classes/heap/released:bytes"}}
+	metrics.Read(s)
+	return s[0].Value.Uint64() - s[1].Value.Uint64()
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

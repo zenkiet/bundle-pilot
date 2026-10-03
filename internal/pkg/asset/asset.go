@@ -1,7 +1,10 @@
 package asset
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"mime"
 	"net/http"
 	"path"
@@ -25,80 +28,75 @@ var (
 	etagSuffix      = [...]string{identity: `"`, gzipped: `-gz"`, brotli: `-br"`}
 )
 
+// variant is one encoding of an asset, read from memory or from a span of an open zip.
 type variant struct {
-	body []byte
+	size int64
+	open func() io.ReadSeekCloser
 	etag []string
 	enc  []string
 }
 
-// Blob is one unique content with its precomputed encodings; it is shared by
-// every asset whose bytes hash the same.
-type Blob struct {
-	sum     [32]byte
-	v       [3]variant
-	encoded bool
-}
-
-func NewBlob(sum [32]byte, body, gz, br []byte) *Blob {
-	b := &Blob{sum: sum}
-	tag := `"` + hex.EncodeToString(sum[:8])
-	b.set(identity, tag, body)
-	if len(gz) > 0 && len(gz) < len(body) {
-		b.set(gzipped, tag, gz)
-	}
-	if len(br) > 0 && len(br) < len(body) {
-		b.set(brotli, tag, br)
-	}
-	b.encoded = b.has(gzipped) || b.has(brotli)
-	return b
-}
-
-func (b *Blob) set(e encoding, tag string, body []byte) {
-	b.v[e] = variant{
-		body: body,
-		etag: []string{tag + etagSuffix[e]},
-		enc:  encodings[e],
-	}
-}
-
-func (b *Blob) Sum() [32]byte { return b.sum }
-
-// Size is the RAM held by every representation of the blob.
-func (b *Blob) Size() int {
-	n := 0
-	for _, v := range b.v {
-		n += len(v.body)
-	}
-	return n
-}
-
-func (b *Blob) has(e encoding) bool { return b.v[e].body != nil }
-
 type Asset struct {
-	blob      *Blob
+	v         [3]variant
+	body      []byte
 	ctype     []string
 	cache     []string
 	immutable bool
 }
 
-func New(name string, b *Blob) *Asset {
-	a := &Asset{
-		blob:      b,
-		ctype:     []string{contentType(name, b.v[identity].body)},
-		cache:     cacheRevalidate,
-		immutable: hashed(name),
+// FromZip serves a file in place from the open zip ra: sum is its SHA-256 (the ETag), head its
+// first bytes (the content type), br its precompressed sidecar or nil. A deflate entry also
+// goes out as gzip, its stream framed rather than recompressed.
+func FromZip(name string, ra io.ReaderAt, f Span, sum [32]byte, head []byte, br *Span) *Asset {
+	a := newAsset(name, head)
+	tag := `"` + hex.EncodeToString(sum[:8])
+	a.set(identity, tag, f.Size, func() io.ReadSeekCloser { return f.Open(ra) })
+	best := f.Size
+	if f.Framable && f.Raw+frameLen < best {
+		best = f.Raw + frameLen
+		a.set(gzipped, tag, best, func() io.ReadSeekCloser { return frame(ra, f) })
 	}
+	if br != nil && br.Size < best {
+		a.set(brotli, tag, br.Size, func() io.ReadSeekCloser { return br.Open(ra) })
+	}
+	return a
+}
+
+// New keeps body and gz in memory: the stamped index.html and ngsw.json.
+func New(name string, body, gz []byte) *Asset {
+	a := newAsset(name, body)
+	sum := sha256.Sum256(body)
+	tag := `"` + hex.EncodeToString(sum[:8])
+	a.body = body
+	a.set(identity, tag, int64(len(body)), func() io.ReadSeekCloser { return nopCloser{bytes.NewReader(body)} })
+	if len(gz) > 0 && len(gz) < len(body) {
+		a.set(gzipped, tag, int64(len(gz)), func() io.ReadSeekCloser { return nopCloser{bytes.NewReader(gz)} })
+	}
+	return a
+}
+
+func newAsset(name string, head []byte) *Asset {
+	a := &Asset{ctype: []string{contentType(name, head)}, cache: cacheRevalidate, immutable: hashed(name)}
 	if a.immutable {
 		a.cache = cacheImmutable
 	}
 	return a
 }
 
-func (a *Asset) Blob() *Blob { return a.blob }
+func (a *Asset) set(e encoding, tag string, size int64, open func() io.ReadSeekCloser) {
+	a.v[e] = variant{size: size, open: open, etag: []string{tag + etagSuffix[e]}, enc: encodings[e]}
+}
 
-func (a *Asset) Body() []byte { return a.blob.v[identity].body }
+func (a *Asset) has(e encoding) bool { return a.v[e].open != nil }
 
-func (a *Asset) ETag() string { return a.blob.v[identity].etag[0] }
+func (a *Asset) encoded() bool { return a.has(gzipped) || a.has(brotli) }
+
+// Body is the content of an in-memory asset, nil for one served from a zip.
+func (a *Asset) Body() []byte { return a.body }
+
+func (a *Asset) Size() int64 { return a.v[identity].size }
+
+func (a *Asset) ETag() string { return a.v[identity].etag[0] }
 
 func (a *Asset) Immutable() bool { return a.immutable }
 
@@ -107,20 +105,11 @@ func init() {
 	_ = mime.AddExtensionType(".xlsm", "application/vnd.ms-excel.sheet.macroEnabled.12")
 }
 
-func contentType(name string, body []byte) string {
+func contentType(name string, head []byte) string {
 	if ct := mime.TypeByExtension(path.Ext(name)); ct != "" {
 		return ct
 	}
-	return http.DetectContentType(body)
-}
-
-func Compressible(name string, body []byte) bool {
-	if len(body) <= 256 {
-		return false
-	}
-	ct := contentType(name, body)
-	return strings.HasPrefix(ct, "text/") || strings.Contains(ct, "javascript") ||
-		strings.Contains(ct, "json") || strings.Contains(ct, "xml") || ct == "application/wasm"
+	return http.DetectContentType(head)
 }
 
 func hashed(name string) bool {

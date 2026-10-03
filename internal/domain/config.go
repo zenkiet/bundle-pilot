@@ -19,15 +19,12 @@ import (
 	"github.com/zenkiet/bundle-pilot/internal/pkg/version"
 )
 
-var ErrBackendKind = errors.New("backend must have the same shape as the backend table keys")
-
 const (
 	maxFacts   = 32
 	maxFactLen = 256
 )
 
-// Config is config.json: rules are checked top to bottom, then the backend
-// table, then default.
+// Config is config.pb, parsed and validated.
 type Config struct {
 	Project     string
 	Environment string
@@ -86,8 +83,7 @@ type bound struct {
 
 type Facts map[string]string
 
-// DecodeConfig reads config.pb, or its JSON form when asJSON is set; unknown
-// JSON fields are rejected with a line and column.
+// DecodeConfig reads config.pb, or its JSON form, which rejects unknown fields.
 func DecodeConfig(data []byte, asJSON bool) (*configv1.Config, error) {
 	pb := &configv1.Config{}
 	if asJSON {
@@ -96,7 +92,6 @@ func DecodeConfig(data []byte, asJSON bool) (*configv1.Config, error) {
 	return pb, proto.Unmarshal(data, pb)
 }
 
-// EncodeConfig writes config.pb bytes, the same bytes for the same content.
 func EncodeConfig(pb *configv1.Config) ([]byte, error) {
 	return proto.MarshalOptions{Deterministic: true}.Marshal(pb)
 }

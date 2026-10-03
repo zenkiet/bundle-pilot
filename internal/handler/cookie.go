@@ -10,7 +10,7 @@ const (
 	cookieName  = "bundle"
 	revCookie   = "bundle_rev"
 	factsCookie = "bundle_facts"
-	cookieAge   = 365 * 24 * 3600 // 1 year
+	cookieAge   = 365 * 24 * 3600
 	decisionAge = 7 * 24 * 3600
 )
 

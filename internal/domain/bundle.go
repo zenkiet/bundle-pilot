@@ -4,8 +4,6 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
-	"iter"
-	"maps"
 	"net/url"
 	"path"
 	"slices"
@@ -29,18 +27,18 @@ type Bundle struct {
 	index    *asset.Asset
 }
 
-func NewBundle(ver, baseHref string, files map[string]*asset.Asset) (*Bundle, error) {
-	index := files["/index.html"]
-	if index == nil {
+// NewBundle serves index, the stamped page, for index.html; files keeps the raw one.
+func NewBundle(ver, baseHref string, files map[string]*asset.Asset, index *asset.Asset) (*Bundle, error) {
+	if files["/index.html"] == nil {
 		return nil, ErrNoIndex
 	}
 	return &Bundle{Version: ver, base: normalizeBase(baseHref), tag: []string{ver}, files: files, index: index}, nil
 }
 
-func (b *Bundle) Bytes() int {
-	n := 0
+func (b *Bundle) Bytes() int64 {
+	var n int64
 	for _, a := range b.files {
-		n += len(a.Body())
+		n += a.Size()
 	}
 	return n
 }
@@ -51,12 +49,11 @@ func (b *Bundle) Index() *asset.Asset { return b.index }
 
 func (b *Bundle) Len() int { return len(b.files) }
 
-func (b *Bundle) All() iter.Seq2[string, *asset.Asset] { return maps.All(b.files) }
+// File is rel exactly as zipped, without the stamped index or other bundles' files.
+func (b *Bundle) File(rel string) *asset.Asset { return b.files[rel] }
 
-// Inventory is what a source found on disk, before selection rules apply.
-// Errors are refusals (a rejected config.json, a bundle that did not load),
-// Issues are warnings; Retry reports failures that may clear without any
-// change on disk.
+// Inventory is what a source found on disk: Errors are refusals, Issues are
+// warnings, Retry marks failures that may clear with no change on disk.
 type Inventory struct {
 	Bundles []*Bundle
 	Config  Config
@@ -81,7 +78,6 @@ type Snapshot struct {
 	Errors      []string
 	Issues      []string
 	LoadedAt    time.Time
-	Resident    int
 	Signed      bool
 	Setup       bool
 	bundles     map[string]*Bundle
@@ -89,14 +85,11 @@ type Snapshot struct {
 	hashed      map[string]owned
 }
 
-// NewSnapshot applies config.json to the bundles on disk. The default comes
-// from config.json, else the newest bundle; the default's <base href> is the mount path.
-func NewSnapshot(inv Inventory, now time.Time) (*Snapshot, error) {
-	if len(inv.Bundles) == 0 {
-		return nil, errors.New("no bundles")
-	}
+// NewSnapshot applies the config to the bundles. keep is the default being served, kept
+// when the config names one not on disk; the default's <base href> is the mount path.
+func NewSnapshot(inv Inventory, now time.Time, keep string) *Snapshot {
 	s := &Snapshot{
-		Errors:   inv.Errors,
+		Errors:   slices.Clone(inv.Errors),
 		Issues:   slices.Clone(inv.Issues),
 		LoadedAt: now,
 		Signed:   inv.Signed,
@@ -106,25 +99,21 @@ func NewSnapshot(inv Inventory, now time.Time) (*Snapshot, error) {
 		hashed:   map[string]owned{},
 	}
 	slices.SortFunc(s.order, func(a, b *Bundle) int {
-		return cmp.Or(version.Compare(b.Version, a.Version), strings.Compare(b.Version, a.Version))
+		return cmp.Or(inv.Config.Dates.Compare(b.Version, a.Version), strings.Compare(b.Version, a.Version))
 	})
 	for _, b := range s.order {
 		s.bundles[b.Version] = b
 	}
-	blobs := map[*asset.Blob]bool{}
 	for _, b := range slices.Backward(s.order) {
 		for rel, a := range b.files {
 			if a.Immutable() {
 				s.hashed[rel] = owned{a, b}
 			}
-			if !blobs[a.Blob()] {
-				blobs[a.Blob()] = true
-				s.Resident += a.Blob().Size()
-			}
 		}
 	}
-	s.pickDefault(inv.Config.Default)
-	s.Config = Config{Project: inv.Config.Project, Environment: inv.Config.Environment, Default: s.Default.Version, Dates: inv.Config.Dates, Rules: slices.Clone(inv.Config.Rules), Source: inv.Config.Source, Auth: inv.Config.Auth}
+	s.pickDefault(inv.Config.Default, keep)
+	s.Config = inv.Config
+	s.Config.Rules = slices.Clone(inv.Config.Rules)
 	s.Config.Backend, s.Issues = inv.Config.Backend.validate(s.Config.Dates, s.bundles, now, s.Issues)
 	keys := map[string]string{}
 	for i := range s.Config.Rules {
@@ -143,23 +132,32 @@ func NewSnapshot(inv Inventory, now time.Time) (*Snapshot, error) {
 		keys[r.key] = r.ID
 	}
 	s.BasePath = s.Default.base
-	return s, nil
+	return s
 }
 
-func (s *Snapshot) pickDefault(config string) {
-	s.Default, s.DefaultFrom = s.order[0], "newest"
-	if b := s.bundles[config]; b != nil {
-		s.Default, s.DefaultFrom = b, "config"
+func (s *Snapshot) pickDefault(config, keep string) {
+	if len(s.order) == 0 {
+		s.Default, s.DefaultFrom = &Bundle{base: "/"}, "none"
+		s.Errors = append(s.Errors, "no bundles in versions/ yet: upload one")
+		return
 	}
+	s.Default, s.DefaultFrom = s.order[0], "newest"
 	switch {
+	case s.bundles[config] != nil:
+		s.Default, s.DefaultFrom = s.bundles[config], "config"
 	case config == "":
 		s.Issues = append(s.Issues, "config.pb sets no default: the newest bundle serves every visitor without a cookie")
-	case s.DefaultFrom != "config":
+	default:
+		if b := s.bundles[keep]; b != nil {
+			s.Default, s.DefaultFrom = b, "previous"
+		}
 		s.Issues = append(s.Issues, fmt.Sprintf("config default %s not on disk, using %s", config, s.Default.Version))
 	}
 }
 
 func (s *Snapshot) Bundles() []*Bundle { return s.order }
+
+func (s *Snapshot) Bundle(version string) *Bundle { return s.bundles[version] }
 
 // Pick returns the bundle to serve (query wins over cookie) and the one the cookie pins.
 func (s *Snapshot) Pick(query, cookie string) (picked, current *Bundle) {
@@ -176,6 +174,9 @@ func (s *Snapshot) Pick(query, cookie string) (picked, current *Bundle) {
 // Lookup finds rel in b, falling back to content-hashed files of any bundle so
 // sessions opened before a switch keep loading their chunks.
 func (s *Snapshot) Lookup(b *Bundle, rel string) (*asset.Asset, *Bundle) {
+	if rel == "/index.html" {
+		return b.index, b
+	}
 	if a := b.files[rel]; a != nil {
 		return a, b
 	}
@@ -196,10 +197,11 @@ func (s *Snapshot) Decide(f Facts, now time.Time) (*Bundle, string, error) {
 	if backend, ok := f["backend"]; ok && len(s.Config.Backend) > 0 {
 		l := s.Config.Dates
 		if want := l.Kind(s.Config.Backend[0].Backend); l.Kind(backend) != want {
+			shape := "a dotted version"
 			if want == version.Date {
-				return nil, "", fmt.Errorf("%w: want a date like %s", ErrBackendKind, l)
+				shape = "a date like " + l.String()
 			}
-			return nil, "", fmt.Errorf("%w: want a dotted version", ErrBackendKind)
+			return nil, "", errors.New("backend must have the same shape as the backend table keys: want " + shape)
 		}
 		st := s.Config.Backend.Resolve(l, backend)
 		return s.bundles[st.Bundle], "backend:" + st.Backend, nil

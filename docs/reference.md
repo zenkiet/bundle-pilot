@@ -3,10 +3,10 @@
 The technical manual: layout on disk, the config contract, bundle sources, endpoints, signing and the client snippet. The [README](../README.md) explains why the project exists and how it works.
 
 Bundle Pilot serves several versions of a static web bundle and picks one per user, so a
-frontend can match the backend version it is talking to. Every file lives in
-RAM once per unique content (identical files across bundles are shared),
-pre-compressed, with strong ETags, conditional requests and ranges handled by
-the standard library. Works with
+frontend can match the backend version it is talking to. Files are served
+straight from the zips, which the OS page cache keeps warm, so RAM stays at a
+few MB however many versions are deployed; strong ETags, conditional requests
+and ranges come from the standard library. Works with
 any bundler that emits content-hashed filenames (Angular, Vite, webpack,
 SvelteKit).
 
@@ -18,15 +18,18 @@ dist/
   versions/
     4.78.0.zip        one zip per bundle, index.html at the root of the zip
     4.79.0.zip          index.html: <base href> decides the mount path
-                        main-ABCD1234.js.br: optional precompressed sidecars (.br, .gz)
+                        main-ABCD1234.js.br: optional brotli sidecar, stored
 ```
 
-One zip is one version: `mv` replaces it atomically, every entry carries a
-CRC, and its deflate streams are served as `gzip` directly, so nothing is
-compressed at load. Build it with a fixed tool and level (`zip -9 -r -X -D`)
-so identical files across versions share one copy in RAM; store images and
-fonts (`zip -0`) rather than deflating them. Directory and dot entries inside
-the zip are ignored, and so is anything in `versions/` that is not a `.zip`.
+One zip is one version and the gateway serves it in place: a deflated entry
+goes out as `gzip` with its stream framed, a stored `x.br` next to `x` as
+`br`, and anything else is inflated on demand. At load every entry is read
+once to check its CRC and size and take the SHA-256 behind its ETag; only
+`index.html` (stamped with the version) and `ngsw.json` are kept in memory.
+A zip stays open while a snapshot uses it, so **replace zips only by rename**:
+a write in place makes the gateway drop that version at the next check rather
+than serve shifted bytes. Directory and dot entries inside the zip are
+ignored, and so is anything in `versions/` that is not a `.zip`.
 
 Deploy a new version as `dist/versions/.tmp-<v>.zip` then `mv` it to
 `dist/versions/<v>.zip`: dot files are ignored and the rename is atomic. The
@@ -34,15 +37,21 @@ gateway checks every 5 seconds and reloads only the zips whose size or mtime
 changed; a bundle that fails to load (read error, or replaced while being
 read) is retried with a backoff up to a minute, and its previous load keeps
 serving meanwhile. `config.pb` is written atomically by the admin UI and by
-`gateway import`.
+`gateway import`. With no bundle yet the gateway still starts: app routes and
+`POST /__gateway/data` answer 503 until one is uploaded, while `/healthz` and
+the admin API work. Zips that vanish from a running gateway keep serving from
+their open files.
 
-Precompressed sidecars (`x.js.br`, `x.js.gz`) are served instead of compressing
-at load time; everything else compressible is gzipped once per unique content.
+The gateway compresses nothing itself: brotli comes from the build. Write
+`x.br` next to every text file, store those entries and deflate the rest; a
+`.br` that does not decode to its file is ignored with an issue, and text
+files without one go out as gzip, which `/__gateway/status` reports.
 
 ```sh
-cd build/browser   # the app's build output, before zipping
-find . -type f \( -name '*.js' -o -name '*.css' -o -name '*.html' -o -name '*.svg' -o -name '*.json' -o -name '*.txt' \) \
-  -print0 | xargs -0 -P8 -n1 brotli -q 11 -k
+cd build/browser   # the app's build output, before hashing and zipping
+find . -type f -size +1k \( -name '*.js' -o -name '*.mjs' -o -name '*.css' -o -name '*.html' -o -name '*.svg' -o -name '*.json' -o -name '*.txt' \) \
+  -print0 | xargs -0 -n 1 -P "$(getconf _NPROCESSORS_ONLN)" brotli -q 11 -f
+zip -qr -9 -X -D ../4.80.0.zip . -x '*.br' && zip -qr -0 -X -D ../4.80.0.zip . -i '*.br'
 ```
 
 ## Config
@@ -78,7 +87,9 @@ the frontend sends:
 1. the first rule, top to bottom, whose `when` entries all match;
 2. else `backend`: the entry with the largest key `<=` the `backend` fact, or
    the oldest entry when the fact predates them all;
-3. else `default`, or the newest bundle when none is set.
+3. else `default`, or the newest bundle when none is set. A `default` that is
+   not on disk keeps the bundle already serving as default (the newest on a
+   fresh start).
 
 `when` values: a string, number or boolean matches exactly (numbers by their
 literal text, so `2020210` equals `"2020210"`); a list matches any element;
@@ -107,8 +118,9 @@ like a date that does not exist, such as `02.30.2026`, never matches.
 
 An import or a `PUT` rejects unknown keys (`"bundel"`), duplicate keys and
 trailing commas with a line and column, and invalid rules by name; a
-`config.pb` that fails validation is reported in `/__gateway/status` and the
-previous config keeps serving. A rule whose bundle
+`config.pb` that fails validation, cannot be read or goes missing is reported
+in `/__gateway/status` and the previous config keeps serving; before any
+config loaded, a broken one stops the gateway at startup. A rule whose bundle
 is not on disk is inactive until that bundle is deployed. Logs and
 `/__gateway/status` also warn about a backend table that gets older as the
 backend gets newer, dates far in the future, and rules that repeat an
@@ -131,15 +143,16 @@ API with HTTP Basic auth:
 `password` is write-only: the gateway hashes it (PBKDF2-SHA256, 600 000
 rounds, random salt) and stores only `password_hash` in `config.pb`. Reads
 return the hash masked as `***`, and a `PUT` that sends `***` back keeps it;
-send a new `password` to rotate. Without `auth`, or when `config.pb` is
-missing, the admin API is open and `/__gateway/status` reports
+send a new `password` to rotate. Without `auth`, or when the gateway starts
+without `config.pb`, the admin API is open and `/__gateway/status` reports
 `setup_required` and `auth`. The admin UI opens a first-run wizard at
-`/__gateway/ui/setup/` when `config.pb` is missing (project, admin account,
+`/__gateway/ui/setup/` on such a start (project, admin account,
 bundle source, default bundle) and signs the browser in as soon as it saves;
 later visits ask for the password at `/__gateway/ui/login/`.
 
-Auth covers `/__gateway/status`, `config`, `bundles` and `reload`. The bundle
-routes, `POST /__gateway/data`, `/healthz` and the UI assets stay open, and
+Auth covers `/__gateway/status`, `config`, uploads and deletes under `bundles`,
+and `reload`. The bundle routes, `GET /__gateway/bundles/*` (for over-the-air
+clients), `POST /__gateway/data`, `/healthz` and the UI assets stay open, and
 credentials travel in clear over plain HTTP, so terminate TLS in front of the
 admin paths.
 
@@ -217,11 +230,13 @@ connections are closed.
 | `POST /__gateway/data` | Body: a flat JSON object of facts (`Content-Type: application/json`, at most 4 KiB and 32 facts), e.g. `{"backend":"07.30.2026","storeID":2020210}`. Returns `{"bundle":"4.80.0","via":"rule:store-2020210"}`, where `via` is `rule:<id>`, `backend:<key>` or `default`. A rule or backend decision sets cookie `bundle` for 7 days (refreshed on every call); a default decision clears it. Cross-origin requests are refused. Send `X-Dry-Run: 1` to see the decision without cookies or counters. |
 | `GET /__gateway/config` | The stored config, JSON by default or protobuf with `Accept: application/x-protobuf`; the S3 secret and the password hash come back masked as `***`. |
 | `PUT /__gateway/config` | Replace the config (`application/json` or `application/x-protobuf`). Validated against the loaded bundles: 422 with `errors` when rejected, else `issues` (warnings) and `saved`; the gateway reloads before answering. `X-Dry-Run: 1` validates without saving. A masked secret or password hash keeps the stored one; `auth.password` is hashed before the file is written. |
-| `/__gateway/ui/` | Admin UI (SvelteKit, embedded): health, default bundle, rules, backend table, bundles with upload and delete, source, decision tester on Overview; a Settings page for what the setup wizard asked (project name, environment, date format, admin account, bundle source, default bundle) plus reload and sign-out; phone, tablet and desktop layouts. First run opens `/setup/`, afterwards `/login/` asks for the admin password, kept in the tab's session storage. Keep `/__gateway/` off the public internet at the ingress anyway. Develop it with `cd frontend && GATEWAY=http://127.0.0.1:8080 pnpm dev`. |
+| `/__gateway/ui/` | Admin UI (SvelteKit, embedded): health, default bundle, rules, backend table, bundles with upload and delete, source, decision tester on Overview; a Settings page for what the setup wizard asked (project name, environment, date format, admin account, bundle source, default bundle) plus reload and sign-out; phone, tablet and desktop layouts. First run opens `/setup/`, afterwards `/login/` asks for the admin password, kept in the tab's session storage. Keep `/__gateway/ui/` and the authenticated routes off the public internet at the ingress anyway; `POST /__gateway/data` and `GET /__gateway/bundles/*` must stay reachable for apps. Develop it with `cd frontend && GATEWAY=http://127.0.0.1:8080 pnpm dev`. |
 | `PUT /__gateway/bundles/<version>.zip` | Upload a bundle: the raw zip as the body (at most 256 MiB), named by its version, `4.81.0.zip` or a date in the configured format. Accepted only when it holds `index.html` and, with `BUNDLE_PUBKEY` set, a valid `bundle.sha256.sig`; 400 for a bad name, 413 when too large, 422 otherwise. A zip of the same name is replaced. With an S3 source the zip goes to the bucket first, then into `versions/`. The gateway reloads before answering `{"version","files","replaced","reload_ms"}`. |
+| `GET /__gateway/bundles/<version>.zip` | The zip as uploaded, with ranges and no auth. |
+| `GET /__gateway/bundles/<version>/<path>` | One file of a bundle exactly as zipped (the raw `index.html`, not the stamped page), with ranges and no auth, no cookies and no `index.html` fallback. Over-the-air updaters install from it file by file: fetch `bundle.sha256` and `bundle.sha256.sig`, verify the signature with the publisher's public key, and hand the listed files to the updater (Capgo's `download({ manifest })`), which checks each file's SHA-256 and only downloads what it does not already hold. Call `POST /__gateway/data` natively: WebView requests are cross-origin and refused. |
 | `DELETE /__gateway/bundles/<version>.zip` | Remove a bundle from `versions/` and from the bucket, then reload: 204, 404 when absent, 409 for the default bundle (set another default first). Rules that pointed at it turn inactive. |
 | `POST /__gateway/reload` | Reload config and bundles now instead of at the watcher's next tick; answers `reload_ms`, `default`, `bundles`, `errors`, `issues`, and 500 with `error` when the previous snapshot was kept. |
-| `/__gateway/status` | Gateway `version` and `started_at`, `project_name`, `environment`, `setup_required` (no `config.pb` yet) and `auth` (a password is set), default and its source, base path, bundle `source` (`local` or `s3://bucket/prefix/`) with the last `sync` (`at`, `objects`, `error`) for a bucket, `signing` (whether `BUNDLE_PUBKEY` is set), `loaded_at`, reload count and last error, `errors` (a rejected config, refused bundles), RAM held (`resident_bytes`), bundles with file counts, sizes, `zip_bytes` and `mod_time`, rules (with `active`), backend table, decisions counted by `via` since start, load issues. Behind Basic auth once a password is set. |
+| `/__gateway/status` | Gateway `version` and `started_at`, `project_name`, `environment`, `setup_required` (no `config.pb` yet) and `auth` (a password is set), default and its source, base path, bundle `source` (`local` or `s3://bucket/prefix/`) with the last `sync` (`at`, `objects`, `error`) for a bucket, `signing` (whether `BUNDLE_PUBKEY` is set), `loaded_at`, reload count and last error, `errors` (a rejected config, refused bundles), memory the process holds from the OS (`resident_bytes`; the zips sit in the page cache, which a cgroup limit counts too), bundles with file counts, sizes, `zip_bytes` and `mod_time`, rules (with `active`), backend table, decisions counted by `via` since start, load issues. Behind Basic auth once a password is set. |
 | `/healthz` | 200 |
 
 Cache policy: hashed files are `public, max-age=31536000, immutable`;
@@ -231,33 +246,51 @@ caches the hashed files at the edge and passes everything else through; that
 is the largest latency win available, the gateway itself spends about 10µs
 of CPU per request.
 
+## HTTP/3 and the edge
+
+Terminate HTTP/3 (QUIC) where TLS already ends, at the edge: on Cloudflare,
+Speed › Settings › Protocol Optimization › HTTP/3. On Traefik, Caddy or nginx,
+enable it on the TLS entry point and publish `443/udp` next to `443/tcp`: with
+UDP closed, `Alt-Svc: h3` still goes out and browsers quietly stay on HTTP/2.
+The gateway keeps speaking
+HTTP/1.1 to it; Cloudflare uses HTTP/2 to an origin only over TLS, so h2c would
+not help. With 0-RTT on, Cloudflare sends only GET, HEAD and OPTIONS early,
+marked `Early-Data: 1`, so a replay can at most count a decision twice.
+Android's native HTTP (CapacitorHttp, the Capgo updater) does not use QUIC;
+iOS's URLSession does. Never put Cache Everything or an edge TTL on
+`/__gateway/*`, and purge `/__gateway/bundles/<version>/*` after re-uploading a
+version.
+
 ## Signing bundles
 
 With `BUNDLE_PUBKEY` set, every bundle must contain `bundle.sha256`
 (`sha256sum` format, one line per file) and `bundle.sha256.sig` (its Ed25519
 signature, raw or hex). A bundle whose manifest is missing, unsigned, or lists
-a file that changed, is refused and its previous load keeps serving. The same
-hashes serve as checksums for mobile live updates.
+a file that changed, is refused and its previous load keeps serving. Mobile
+apps verify the same signature before installing, so one signature covers the
+web and over-the-air updates; write it as hex, which every HTTP client reads
+back unchanged. Gateways from before this change kept `versions/*.zip.sig`
+files; they are unused now and can be deleted.
 
 ```sh
 openssl genpkey -algorithm ed25519 -out bundle-key.pem           # once, keep private
 openssl pkey -in bundle-key.pem -pubout -outform DER | tail -c 32 | xxd -p -c 64   # BUNDLE_PUBKEY
-cd build/browser   # the app's build output, before zipping
-find . -type f ! -name 'bundle.sha256*' -exec sha256sum {} + > bundle.sha256
-openssl pkeyutl -sign -inkey /path/to/bundle-key.pem -rawin -in bundle.sha256 -out bundle.sha256.sig
-zip -9 -r -X -D ../4.80.0.zip .
+cd build/browser   # the app's build output, brotli sidecars already written
+find . -type f ! -path '*/.*' ! -name 'bundle.sha256*' -exec sha256sum {} + > bundle.sha256
+openssl pkeyutl -sign -inkey /path/to/bundle-key.pem -rawin -in bundle.sha256 | od -An -v -tx1 | tr -d ' \n' > bundle.sha256.sig
+zip -qr -9 -X -D ../4.80.0.zip . -x '*.br' && zip -qr -0 -X -D ../4.80.0.zip . -i '*.br'
 ```
 
 ## Checking a deploy
 
 `gateway check [DIST]` loads the dist directory exactly as the server would,
-prints every issue and exits 1 when `config.pb` is rejected or a zip is
-refused (unreadable, unsigned, or without `index.html` at its root). Run it in CI or before
+prints every issue and exits 1 when `config.pb` is rejected, a zip is
+refused (unreadable, unsigned, or without `index.html` at its root) or there is no bundle. Run it in CI or before
 copying a hand edit into place.
 
 ## Frontend integration
 
-Angular apps can skip the snippet below: `libs/angular` ships `provideBundlePilot()` (Angular 19+, standalone or NgModule providers), and `libs/core` the same logic for any framework; see `libs/README.md`. The gateway stamps `<meta name="bundle-pilot:bundle" content="4.79.0">` into every served `index.html`, so the app can read the version it runs as instead of carrying a copy of the zip name.
+Angular apps can skip the snippet below: `libs/angular` ships `provideBundlePilot()` (Angular 19+, standalone or NgModule providers), and `libs/core` the same logic for any framework; see `libs/README.md`. The gateway stamps `<meta name="bundle-pilot:bundle" content="4.79.0">` into every served `index.html` (once, at load, so the page goes out precompressed), so the app can read the version it runs as instead of carrying a copy of the zip name.
 
 Post every fact the app knows, and reload when the answer differs from the
 version it was built as (`environment.version` must equal the zip's name
