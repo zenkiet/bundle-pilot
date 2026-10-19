@@ -10,9 +10,11 @@ function read() {
 
 class Session {
 	header = $state(read());
+	setup = $state(''); // first-run token from the gateway log
 
 	set(user: string, password: string) {
-		this.header = 'Basic ' + btoa(`${user}:${password}`);
+		this.header =
+			'Basic ' + btoa(String.fromCharCode(...new TextEncoder().encode(`${user}:${password}`)));
 		sessionStorage.setItem(KEY, this.header);
 	}
 

@@ -4,7 +4,7 @@
 	import { X } from '@lucide/svelte';
 	import SideNav from './SideNav.svelte';
 
-	import { status } from '$lib/entities/status/store.svelte';
+	import { status } from '#lib/entities/status/store.svelte.ts';
 
 	let { onsearch }: { onsearch: () => void } = $props();
 	const title = $derived(status.value?.project_name || 'Bundle Pilot');

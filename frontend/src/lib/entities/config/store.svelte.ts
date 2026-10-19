@@ -1,6 +1,6 @@
 import { clone, equals } from '@bufbuild/protobuf';
-import { session } from '$lib/shared/lib/session.svelte';
-import { emptyConfig, loadConfig, saveConfig, type SaveResult } from './api';
+import { session } from '#lib/shared/lib/session.svelte.ts';
+import { emptyConfig, loadConfig, saveConfig, type SaveResult } from './api.ts';
 import { ConfigSchema, type Config } from './gen/bundlepilot/config/v1/config_pb';
 
 class ConfigStore {
@@ -11,11 +11,14 @@ class ConfigStore {
 	busy = $state(false);
 	loaded = $state(false);
 	dirty = $derived(!equals(ConfigSchema, this.saved, this.draft));
+	/** ETag of `saved`: a save sends it, so it cannot overwrite a change made elsewhere. */
+	etag = '';
 
 	async load() {
-		const c = await loadConfig();
+		const { config: c, etag } = await loadConfig();
 		this.saved = c;
 		this.draft = clone(ConfigSchema, c);
+		this.etag = etag;
 		this.errors = [];
 		this.loaded = true;
 	}
@@ -28,7 +31,7 @@ class ConfigStore {
 		this.busy = true;
 		try {
 			const auth = this.draft.auth;
-			const r = await this.apply(saveConfig(this.draft));
+			const r = await this.apply(saveConfig(this.draft, false, this.etag));
 			if (r.saved) {
 				if (auth?.password) {
 					session.set(auth.username, auth.password);
@@ -36,11 +39,25 @@ class ConfigStore {
 					auth.passwordHash = '***';
 				}
 				this.saved = clone(ConfigSchema, this.draft);
+				this.etag = r.etag;
 			}
 			return r;
 		} finally {
 			this.busy = false;
 		}
+	}
+
+	/** Saves one edit on top of the saved config right away; the rest of the draft stays unsaved. */
+	async patch(edit: (c: Config) => void): Promise<SaveResult> {
+		const next = clone(ConfigSchema, this.saved);
+		edit(next);
+		const r = await saveConfig(next, false, this.etag);
+		if (r.saved) {
+			this.saved = next;
+			this.etag = r.etag;
+			edit(this.draft);
+		}
+		return r;
 	}
 
 	reset() {

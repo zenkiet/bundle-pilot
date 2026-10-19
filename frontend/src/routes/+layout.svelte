@@ -1,23 +1,33 @@
 <script lang="ts">
+	import '@fontsource-variable/figtree';
 	import './layout.css';
-	import favicon from '$lib/assets/favicon.svg';
+	import favicon from '#lib/assets/favicon.svg';
 	import { toBinary } from '@bufbuild/protobuf';
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { page } from '$app/state';
-	import { ListChecks, Package, RefreshCw, Save, SunMoon, Undo2, Upload } from '@lucide/svelte';
-	import { reloadGateway } from '$lib/entities/bundle/api';
-	import { ConfigSchema } from '$lib/entities/config/gen/bundlepilot/config/v1/config_pb';
-	import { config } from '$lib/entities/config/store.svelte';
-	import { status } from '$lib/entities/status/store.svelte';
+	import {
+		History,
+		ListChecks,
+		Package,
+		RefreshCw,
+		Save,
+		SunMoon,
+		Undo2,
+		Upload
+	} from '@lucide/svelte';
+	import { reloadGateway } from '#lib/entities/bundle/api.ts';
+	import { ConfigSchema } from '#lib/entities/config/gen/bundlepilot/config/v1/config_pb.ts';
+	import { config } from '#lib/entities/config/store.svelte.ts';
+	import { status } from '#lib/entities/status/store.svelte.ts';
 	import CommandPalette, {
 		type Command
-	} from '$lib/features/command-palette/CommandPalette.svelte';
-	import { saveAll } from '$lib/features/save-config/save';
-	import { theme } from '$lib/features/toggle-theme/theme.svelte';
-	import { message, unauthorized } from '$lib/shared/lib/api';
-	import Toast, { toast } from '$lib/shared/ui/Toast.svelte';
-	import AppShell from '$lib/widgets/app-shell/AppShell.svelte';
-	import { jump } from '$lib/widgets/app-shell/nav.svelte';
+	} from '#lib/features/command-palette/CommandPalette.svelte';
+	import { saveAll } from '#lib/features/save-config/save.ts';
+	import { theme } from '#lib/features/toggle-theme/theme.svelte.ts';
+	import { message, unauthorized } from '#lib/shared/lib/api.ts';
+	import Toast, { toast } from '#lib/shared/ui/Toast.svelte';
+	import AppShell from '#lib/widgets/app-shell/AppShell.svelte';
+	import { jump } from '#lib/widgets/app-shell/nav.svelte.ts';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 
@@ -31,16 +41,19 @@
 	});
 	$effect(() => {
 		if (bare && !page.url.pathname.includes('/setup')) return;
-		status.refresh().then(() => {
-			const setup = page.url.pathname.includes('/setup');
-			if (status.value && status.value.setup_required !== setup)
-				return goto(resolve(status.value.setup_required ? '/setup' : '/'));
-			config
-				.load()
-				.catch(
-					(e) => e !== unauthorized && toast(`Cannot load config: ${message(e)}`, { error: true })
-				);
-		});
+		// untracked: request() reads the session, and typing the setup token must not reload the draft
+		untrack(() =>
+			status.refresh().then(() => {
+				const setup = page.url.pathname.includes('/setup');
+				if (status.value && status.value.setup_required !== setup)
+					return goto(resolve(status.value.setup_required ? '/setup' : '/'));
+				config
+					.load()
+					.catch(
+						(e) => e !== unauthorized && toast(`Cannot load config: ${message(e)}`, { error: true })
+					);
+			})
+		);
 	});
 
 	let timer: ReturnType<typeof setTimeout>;
@@ -77,6 +90,13 @@
 			label: 'Upload bundle',
 			icon: Upload,
 			run: () => goto(resolve('/upload'))
+		},
+		{
+			id: 'history',
+			group: 'Actions',
+			label: 'Config history',
+			icon: History,
+			run: () => goto(resolve('/history'))
 		},
 		{
 			id: 'reload',

@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { status } from '$lib/entities/status/store.svelte';
-	import Card from '$lib/shared/ui/Card.svelte';
-	import ProgressBar from '$lib/shared/ui/ProgressBar.svelte';
+	import { status } from '#lib/entities/status/store.svelte.ts';
+	import Card from '#lib/shared/ui/Card.svelte';
+	import ProgressBar from '#lib/shared/ui/ProgressBar.svelte';
 
 	const rows = $derived(
 		Object.entries(status.value?.decisions ?? {}).sort(([, a], [, b]) => b - a)

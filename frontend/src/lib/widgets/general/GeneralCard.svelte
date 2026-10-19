@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { config } from '$lib/entities/config/store.svelte';
-	import Card from '$lib/shared/ui/Card.svelte';
-	import Selector from '$lib/shared/ui/Selector.svelte';
+	import { config } from '#lib/entities/config/store.svelte.ts';
+	import Card from '#lib/shared/ui/Card.svelte';
+	import Selector from '#lib/shared/ui/Selector.svelte';
 
 	const dates = [
 		{ value: 'MM.dd.YYYY', label: 'MM.dd.YYYY', desc: 'default · 07.31.2026' },

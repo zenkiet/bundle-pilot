@@ -1,15 +1,15 @@
 <script lang="ts">
-	import DecisionTester from '$lib/features/test-decision/DecisionTester.svelte';
-	import TabList from '$lib/shared/ui/TabList.svelte';
-	import BackendCard from '$lib/widgets/backend/BackendCard.svelte';
-	import BundlesCard from '$lib/widgets/bundles/BundlesCard.svelte';
-	import DecisionsCard from '$lib/widgets/decisions/DecisionsCard.svelte';
-	import DefaultBundleCard from '$lib/widgets/default-bundle/DefaultBundleCard.svelte';
-	import HealthCard from '$lib/widgets/health/HealthCard.svelte';
-	import IssuesBanner from '$lib/widgets/issues/IssuesBanner.svelte';
-	import RulesCard from '$lib/widgets/rules/RulesCard.svelte';
+	import DecisionTester from '#lib/features/test-decision/DecisionTester.svelte';
+	import TabList from '#lib/shared/ui/TabList.svelte';
+	import BackendCard from '#lib/widgets/backend/BackendCard.svelte';
+	import BundlesCard from '#lib/widgets/bundles/BundlesCard.svelte';
+	import DecisionsCard from '#lib/widgets/decisions/DecisionsCard.svelte';
+	import DefaultBundleCard from '#lib/widgets/default-bundle/DefaultBundleCard.svelte';
+	import HealthCard from '#lib/widgets/health/HealthCard.svelte';
+	import IssuesBanner from '#lib/widgets/issues/IssuesBanner.svelte';
+	import RulesCard from '#lib/widgets/rules/RulesCard.svelte';
 
-	import { nav, type Tab } from '$lib/widgets/app-shell/nav.svelte';
+	import { nav, type Tab } from '#lib/widgets/app-shell/nav.svelte.ts';
 	const tabs: { value: Tab; label: string }[] = [
 		{ value: 'overview', label: 'Overview' },
 		{ value: 'rules', label: 'Rules' },

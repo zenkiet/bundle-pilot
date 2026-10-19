@@ -3,16 +3,17 @@
 	import { resolve } from '$app/paths';
 	import { create } from '@bufbuild/protobuf';
 	import { Check, ChevronRight, CircleCheck, Eye, EyeOff } from '@lucide/svelte';
-	import { AuthSchema } from '$lib/entities/config/gen/bundlepilot/config/v1/config_pb';
-	import { config } from '$lib/entities/config/store.svelte';
-	import { status } from '$lib/entities/status/store.svelte';
-	import AppearanceSelector from '$lib/features/toggle-theme/AppearanceSelector.svelte';
-	import { ago, mb, message } from '$lib/shared/lib/api';
-	import Banner from '$lib/shared/ui/Banner.svelte';
-	import Selector from '$lib/shared/ui/Selector.svelte';
-	import { toast } from '$lib/shared/ui/Toast.svelte';
-	import GeneralCard from '$lib/widgets/general/GeneralCard.svelte';
-	import SourceCard from '$lib/widgets/source/SourceCard.svelte';
+	import { AuthSchema } from '#lib/entities/config/gen/bundlepilot/config/v1/config_pb.ts';
+	import { config } from '#lib/entities/config/store.svelte.ts';
+	import { status } from '#lib/entities/status/store.svelte.ts';
+	import AppearanceSelector from '#lib/features/toggle-theme/AppearanceSelector.svelte';
+	import { ago, mb, message } from '#lib/shared/lib/api.ts';
+	import { session } from '#lib/shared/lib/session.svelte.ts';
+	import Banner from '#lib/shared/ui/Banner.svelte';
+	import Selector from '#lib/shared/ui/Selector.svelte';
+	import { toast } from '#lib/shared/ui/Toast.svelte';
+	import GeneralCard from '#lib/widgets/general/GeneralCard.svelte';
+	import SourceCard from '#lib/widgets/source/SourceCard.svelte';
 
 	const steps = ['Project', 'Admin account', 'Bundle source', 'Default bundle', 'Review'] as const;
 
@@ -96,7 +97,7 @@
 					<Banner
 						status="info"
 						title="Nothing is configured yet"
-						desc="Until setup finishes every visitor gets the newest bundle on disk and the admin API has no password."
+						desc="Until setup finishes every visitor gets the newest bundle on disk. Saving needs the setup token the gateway printed to its log."
 					/>
 					<GeneralCard />
 				{:else if step === 2}
@@ -108,7 +109,14 @@
 								autocomplete="username"
 							/></label
 						>
-						<div class="hidden md:block"></div>
+						<label class="field"
+							><span class="field-label">Setup token</span><input
+								class="input input-lg mono"
+								bind:value={session.setup}
+								autocomplete="off"
+								spellcheck="false"
+							/><span class="field-desc">Printed in the gateway log at startup.</span></label
+						>
 						<label class="field"
 							><span class="field-label">Password</span><span class="input input-lg pr-1"
 								><input

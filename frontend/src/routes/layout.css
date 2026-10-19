@@ -109,7 +109,8 @@
 
 @theme inline {
 	--font-sans:
-		Figtree, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+		'Figtree Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial,
+		sans-serif;
 	--font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
 	--color-bg: var(--bg);
 	--color-surface: var(--surface);

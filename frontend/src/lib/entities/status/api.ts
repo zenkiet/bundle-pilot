@@ -1,4 +1,4 @@
-import { getJSON } from '$lib/shared/lib/api';
+import { getJSON } from '#lib/shared/lib/api.ts';
 
 export interface BundleInfo {
 	version: string;
@@ -6,12 +6,10 @@ export interface BundleInfo {
 	bytes: number;
 	zip_bytes: number;
 	mod_time: string;
-}
-
-export interface RuleInfo {
-	id: string;
-	bundle: string;
-	active: boolean;
+	/** App versions it runs on, from its <meta name="bundle-pilot:native">. */
+	native?: string;
+	/** Listed but never served: see PUT /__gateway/blocked. */
+	blocked?: boolean;
 }
 
 export interface Status {
@@ -33,24 +31,9 @@ export interface Status {
 	errors: string[];
 	resident_bytes: number;
 	bundles: BundleInfo[];
-	rules: RuleInfo[];
 	decisions: Record<string, number>;
+	decisions_by_bundle: Record<string, number>;
 	issues: string[];
 }
 
 export const loadStatus = () => getJSON<Status>('/__gateway/status');
-
-export interface Decision {
-	bundle: string;
-	via: string;
-}
-
-export async function testDecision(facts: string): Promise<Decision> {
-	const res = await fetch('/__gateway/data', {
-		method: 'POST',
-		headers: { 'Content-Type': 'application/json', 'X-Dry-Run': '1' },
-		body: facts
-	});
-	if (!res.ok) throw new Error((await res.text()).trim());
-	return res.json();
-}

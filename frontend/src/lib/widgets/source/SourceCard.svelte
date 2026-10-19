@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { create } from '@bufbuild/protobuf';
-	import { SourceSchema } from '$lib/entities/config/gen/bundlepilot/config/v1/config_pb';
-	import { config } from '$lib/entities/config/store.svelte';
-	import { status } from '$lib/entities/status/store.svelte';
-	import { ago } from '$lib/shared/lib/api';
-	import Card from '$lib/shared/ui/Card.svelte';
+	import { SourceSchema } from '#lib/entities/config/gen/bundlepilot/config/v1/config_pb.ts';
+	import { config } from '#lib/entities/config/store.svelte.ts';
+	import { status } from '#lib/entities/status/store.svelte.ts';
+	import { ago } from '#lib/shared/lib/api.ts';
+	import Card from '#lib/shared/ui/Card.svelte';
 
 	const type = $derived(config.draft.source?.type === 's3' ? 's3' : 'local');
 	const sync = $derived(status.value?.sync);

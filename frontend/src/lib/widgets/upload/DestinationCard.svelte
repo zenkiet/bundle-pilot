@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { Cloud, Package } from '@lucide/svelte';
-	import { status } from '$lib/entities/status/store.svelte';
-	import Card from '$lib/shared/ui/Card.svelte';
+	import { status } from '#lib/entities/status/store.svelte.ts';
+	import Card from '#lib/shared/ui/Card.svelte';
 
 	const s = $derived(status.value);
 	const remote = $derived(!!s?.sync);

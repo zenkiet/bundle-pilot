@@ -11,8 +11,22 @@ export default defineConfig({
 				runes: ({ filename }) =>
 					filename.split(/[/\\]/).includes('node_modules') ? undefined : true
 			},
-			adapter: adapter({ pages: '../internal/ui/build', assets: '../internal/ui/build' }),
-			paths: { base: '/__gateway/ui' }
+			adapter: adapter({ pages: '../internal/ui/build/app', assets: '../internal/ui/build/app' }),
+			paths: { base: '/__gateway/ui' },
+			// Prerendered pages carry it as a meta tag, with hashes of SvelteKit's own inline
+			// scripts; the gateway adds frame-ancestors, which a meta tag cannot set.
+			csp: {
+				mode: 'hash',
+				directives: {
+					'default-src': ['self'],
+					'script-src': ['self'],
+					'style-src': ['self', 'unsafe-inline'],
+					'img-src': ['self', 'data:'],
+					'object-src': ['none'],
+					'base-uri': ['self'],
+					'form-action': ['self']
+				}
+			}
 		})
 	],
 	server: {

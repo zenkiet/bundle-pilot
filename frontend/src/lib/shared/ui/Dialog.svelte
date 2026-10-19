@@ -2,7 +2,7 @@
 	import type { Snippet } from 'svelte';
 	import { fade, scale } from 'svelte/transition';
 	import { X } from '@lucide/svelte';
-	import { media } from '$lib/shared/lib/media.svelte';
+	import { media } from '#lib/shared/lib/media.svelte.ts';
 	import Sheet from './Sheet.svelte';
 
 	let {

@@ -1,29 +1,36 @@
 <script lang="ts">
-	import { config } from '$lib/entities/config/store.svelte';
-	import { status } from '$lib/entities/status/store.svelte';
-	import { ago, mb } from '$lib/shared/lib/api';
-	import Card from '$lib/shared/ui/Card.svelte';
-	import Selector from '$lib/shared/ui/Selector.svelte';
+	import { config } from '#lib/entities/config/store.svelte.ts';
+	import { status } from '#lib/entities/status/store.svelte.ts';
+	import { ago, mb } from '#lib/shared/lib/api.ts';
+	import Card from '#lib/shared/ui/Card.svelte';
+	import Selector from '#lib/shared/ui/Selector.svelte';
 
 	const s = $derived(status.value);
 	const options = $derived(
-		(s?.bundles ?? []).map((b) => ({
-			value: b.version,
-			label: b.version,
-			desc: `${mb(b.zip_bytes)} · ${ago(b.mod_time)}`,
-			badge: b.version === s?.default ? 'current' : undefined
-		}))
+		(s?.bundles ?? [])
+			.filter((b) => !b.blocked)
+			.map((b) => ({
+				value: b.version,
+				label: b.version,
+				desc: `${mb(b.zip_bytes)} · ${ago(b.mod_time)}`,
+				badge: b.version === s?.default ? 'current' : undefined
+			}))
 	);
+	// The share of decisions that chose the default bundle, whichever rule or row chose it.
 	const share = $derived.by(() => {
-		const d = s?.decisions ?? {};
+		const d = s?.decisions_by_bundle ?? {};
 		const total = Object.values(d).reduce((a, b) => a + b, 0);
-		return total ? Math.round(((d.default ?? 0) / total) * 100) : null;
+		return total && s ? Math.round(((d[s.default] ?? 0) / total) * 100) : null;
 	});
 </script>
 
 <Card title="Default bundle" id="default" class="lg:col-span-4">
 	{#snippet actions()}
-		{#if share !== null}<span class="badge badge-success">serving {share}%</span>{/if}
+		{#if share !== null}<span
+				class="badge badge-success"
+				title="Decisions that chose it, on this gateway since it started"
+				>{share}% of decisions</span
+			>{/if}
 	{/snippet}
 	<div class="mono text-[29px] leading-9 font-semibold">{s?.default ?? '…'}</div>
 	<div class="field">

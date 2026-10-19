@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { Upload } from '@lucide/svelte';
-	import { status } from '$lib/entities/status/store.svelte';
-	import BundleMenu from '$lib/features/manage-bundle/BundleMenu.svelte';
-	import { ago, mb } from '$lib/shared/lib/api';
-	import Card from '$lib/shared/ui/Card.svelte';
+	import { status } from '#lib/entities/status/store.svelte.ts';
+	import BundleMenu from '#lib/features/manage-bundle/BundleMenu.svelte';
+	import { ago, mb } from '#lib/shared/lib/api.ts';
+	import Card from '#lib/shared/ui/Card.svelte';
 
 	const s = $derived(status.value);
 </script>
@@ -19,9 +19,14 @@
 			<div class="item py-1.5">
 				<div class="flex min-w-0 flex-1 flex-col">
 					<span class="mono truncate font-medium">{b.version}</span>
-					<span class="desc">{mb(b.zip_bytes)} · {b.files} files · {ago(b.mod_time)}</span>
+					<span class="desc"
+						>{mb(b.zip_bytes)} · {b.files} files · {ago(b.mod_time)}{b.native
+							? ` · native ${b.native}`
+							: ''}</span
+					>
 				</div>
 				{#if b.version === s?.default}<span class="badge badge-green">default</span>{/if}
+				{#if b.blocked}<span class="badge badge-red">blocked</span>{/if}
 				<BundleMenu version={b.version} subtitle="{mb(b.zip_bytes)} · {ago(b.mod_time)}" />
 			</div>
 		{:else}

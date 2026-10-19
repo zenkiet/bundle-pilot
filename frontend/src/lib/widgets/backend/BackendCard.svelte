@@ -1,14 +1,19 @@
 <script lang="ts">
 	import { Plus, X } from '@lucide/svelte';
-	import { config } from '$lib/entities/config/store.svelte';
-	import { status } from '$lib/entities/status/store.svelte';
-	import Card from '$lib/shared/ui/Card.svelte';
-	import Selector from '$lib/shared/ui/Selector.svelte';
+	import { compareKeys } from '#lib/entities/config/gateway.ts';
+	import { config } from '#lib/entities/config/store.svelte.ts';
+	import { status } from '#lib/entities/status/store.svelte.ts';
+	import Card from '#lib/shared/ui/Card.svelte';
+	import Selector from '#lib/shared/ui/Selector.svelte';
 
-	const bundles = $derived(status.value?.bundles.map((b) => b.version) ?? []);
+	const bundles = $derived(
+		status.value?.bundles.filter((b) => !b.blocked).map((b) => b.version) ?? []
+	);
 	const options = $derived(bundles.map((b) => ({ value: b, label: b })));
 	const rows = $derived(
-		Object.entries(config.draft.backend).sort(([a], [b]) => a.localeCompare(b))
+		Object.entries(config.draft.backend).sort(([a], [b]) =>
+			compareKeys(config.draft.dateFormat, a, b)
+		)
 	);
 	let newKey = $state('');
 	const set = (map: Record<string, string>) => (config.draft.backend = map);

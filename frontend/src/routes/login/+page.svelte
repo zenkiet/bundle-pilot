@@ -2,10 +2,10 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { Eye, EyeOff } from '@lucide/svelte';
-	import { status } from '$lib/entities/status/store.svelte';
-	import AppearanceSelector from '$lib/features/toggle-theme/AppearanceSelector.svelte';
-	import { session } from '$lib/shared/lib/session.svelte';
-	import Banner from '$lib/shared/ui/Banner.svelte';
+	import { status } from '#lib/entities/status/store.svelte.ts';
+	import AppearanceSelector from '#lib/features/toggle-theme/AppearanceSelector.svelte';
+	import { session } from '#lib/shared/lib/session.svelte.ts';
+	import Banner from '#lib/shared/ui/Banner.svelte';
 
 	let user = $state('admin');
 	let password = $state('');

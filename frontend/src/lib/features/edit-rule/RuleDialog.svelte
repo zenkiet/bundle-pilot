@@ -1,11 +1,14 @@
 <script lang="ts">
 	import { create } from '@bufbuild/protobuf';
 	import { Plus, X } from '@lucide/svelte';
-	import { RuleSchema, type Rule } from '$lib/entities/config/gen/bundlepilot/config/v1/config_pb';
-	import { fromRows, toRows, type WhenRow } from '$lib/entities/config/when';
-	import Banner from '$lib/shared/ui/Banner.svelte';
-	import Dialog from '$lib/shared/ui/Dialog.svelte';
-	import Selector from '$lib/shared/ui/Selector.svelte';
+	import {
+		RuleSchema,
+		type Rule
+	} from '#lib/entities/config/gen/bundlepilot/config/v1/config_pb.ts';
+	import { fromRows, toRows, type WhenRow } from '#lib/entities/config/when.ts';
+	import Banner from '#lib/shared/ui/Banner.svelte';
+	import Dialog from '#lib/shared/ui/Dialog.svelte';
+	import Selector from '#lib/shared/ui/Selector.svelte';
 
 	let {
 		open = $bindable(false),

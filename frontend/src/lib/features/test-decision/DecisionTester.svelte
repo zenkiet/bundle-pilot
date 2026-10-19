@@ -1,10 +1,9 @@
 <script lang="ts">
-	import { testDecision, type Decision } from '$lib/entities/status/api';
-	import { config } from '$lib/entities/config/store.svelte';
-	import { toRows } from '$lib/entities/config/when';
-	import { message } from '$lib/shared/lib/api';
-	import Banner from '$lib/shared/ui/Banner.svelte';
-	import Card from '$lib/shared/ui/Card.svelte';
+	import { decide, type Decision } from '#lib/entities/config/api.ts';
+	import { config } from '#lib/entities/config/store.svelte.ts';
+	import { message } from '#lib/shared/lib/api.ts';
+	import Banner from '#lib/shared/ui/Banner.svelte';
+	import Card from '#lib/shared/ui/Card.svelte';
 
 	let facts = $state('{"backend": "07.30.2026", "storeID": 2020210}');
 	let result = $state<Decision | null>(null);
@@ -12,21 +11,16 @@
 	const explain = $derived.by(() => {
 		if (!result) return '';
 		const [kind, id] = result.via.split(':');
-		if (kind === 'rule') {
-			const r = config.saved.rules.find((x) => x.id === id);
-			return r
-				? `Rule “${id}” matched: ${toRows(r.when)
-						.map((w) => `${w.fact} = ${w.value}`)
-						.join(', ')}`
-				: `Rule “${id}” matched`;
-		}
-		return kind === 'backend' ? `Backend table row ${id}` : 'Default bundle, nothing matched';
+		if (kind === 'rule') return `Rule “${id}” matched`;
+		if (kind === 'backend') return `Backend table row ${id}`;
+		if (kind === 'native') return 'The default needs a newer native app: the closest older bundle';
+		return 'Default bundle, nothing matched';
 	});
 
 	async function run() {
 		try {
-			result = await testDecision(facts);
-			error = '';
+			result = await decide(facts, config.draft);
+			error = result.error ?? '';
 		} catch (e) {
 			result = null;
 			error = message(e);
@@ -43,12 +37,17 @@
 	>
 	<div class="flex items-center gap-2">
 		<button class="btn btn-primary btn-sm" onclick={run}>Decide</button><span class="sup"
-			>Dry run, no cookie is set.</span
+			>On the draft, unsaved edits included. Sets no cookie.</span
 		>
 	</div>
-	{#if result}
-		<Banner status="success" title={result.bundle} desc={explain} />
-	{:else if error}
+	{#if error}
 		<Banner status="error" title="Refused" desc={error} />
+	{:else if result}
+		<Banner status="success" title={result.bundle} desc={explain} />
+	{/if}
+	{#if result?.why.length}
+		<ul class="flex flex-col gap-1">
+			{#each result.why as line (line)}<li class="desc mono">{line}</li>{/each}
+		</ul>
 	{/if}
 </Card>

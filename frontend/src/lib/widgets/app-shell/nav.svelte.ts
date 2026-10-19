@@ -5,6 +5,7 @@ import { resolve } from '$app/paths';
 import {
 	Cloud,
 	FlaskConical,
+	History,
 	LayoutGrid,
 	ListChecks,
 	Package,
@@ -15,15 +16,16 @@ import {
 	Upload
 } from '@lucide/svelte';
 
-export type Path = '/' | '/upload' | '/settings';
+export type Path = '/' | '/upload' | '/history' | '/settings';
 export type Tab = 'overview' | 'rules' | 'bundles' | 'general' | 'account' | 'source' | 'default';
-export type Section =
+type Section =
 	'rules' | 'backend' | 'bundles' | 'tester' | 'general' | 'account' | 'source' | 'default';
 type Icon = Component<{ size?: number | string }>;
 
 export const pages: { label: string; icon: Icon; path: Path; tab?: Tab }[] = [
 	{ label: 'Overview', icon: LayoutGrid, path: '/', tab: 'overview' },
 	{ label: 'Upload bundle', icon: Upload, path: '/upload' },
+	{ label: 'History', icon: History, path: '/history' },
 	{ label: 'Settings', icon: SlidersHorizontal, path: '/settings', tab: 'general' }
 ];
 

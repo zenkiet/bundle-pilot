@@ -1,25 +1,31 @@
 <script lang="ts">
 	import { ArrowDown, ArrowUp, Copy, Pencil, Plus, Trash2 } from '@lucide/svelte';
 	import { clone } from '@bufbuild/protobuf';
-	import { RuleSchema, type Rule } from '$lib/entities/config/gen/bundlepilot/config/v1/config_pb';
-	import { config } from '$lib/entities/config/store.svelte';
-	import { status } from '$lib/entities/status/store.svelte';
-	import { toRows } from '$lib/entities/config/when';
-	import RuleDialog from '$lib/features/edit-rule/RuleDialog.svelte';
-	import Card from '$lib/shared/ui/Card.svelte';
-	import Menu from '$lib/shared/ui/Menu.svelte';
+	import {
+		RuleSchema,
+		type Rule
+	} from '#lib/entities/config/gen/bundlepilot/config/v1/config_pb.ts';
+	import { config } from '#lib/entities/config/store.svelte.ts';
+	import { status } from '#lib/entities/status/store.svelte.ts';
+	import { untilEnd } from '#lib/entities/config/gateway.ts';
+	import { toRows } from '#lib/entities/config/when.ts';
+	import RuleDialog from '#lib/features/edit-rule/RuleDialog.svelte';
+	import Card from '#lib/shared/ui/Card.svelte';
+	import Menu from '#lib/shared/ui/Menu.svelte';
 
 	let open = $state(false);
 	let editing = $state(-1);
-	const bundles = $derived(status.value?.bundles.map((b) => b.version) ?? []);
+	const bundles = $derived(status.value?.bundles ?? []);
 	const rules = $derived(config.draft.rules);
 	const set = (next: Rule[]) => (config.draft.rules = next);
 	const stateOf = (r: Rule) =>
-		!bundles.includes(r.bundle)
+		!bundles.some((b) => b.version === r.bundle)
 			? ['', 'inactive', 'bundle not on disk']
-			: r.until && Date.parse(r.until) < Date.now()
-				? ['', 'expired', `until ${r.until}`]
-				: ['badge-success', 'active', r.until ? `until ${r.until}` : r.note || 'no expiry'];
+			: bundles.some((b) => b.version === r.bundle && b.blocked)
+				? ['', 'inactive', 'bundle blocked']
+				: r.until && untilEnd(r.until) < Date.now()
+					? ['', 'expired', `until ${r.until}`]
+					: ['badge-success', 'active', r.until ? `until ${r.until}` : r.note || 'no expiry'];
 
 	function edit(i: number) {
 		editing = i;
@@ -118,7 +124,7 @@
 	bind:open
 	rule={editing >= 0 ? (rules[editing] ?? null) : null}
 	position={editing >= 0 ? editing + 1 : rules.length + 1}
-	{bundles}
+	bundles={bundles.filter((b) => !b.blocked).map((b) => b.version)}
 	onsave={apply}
 	ondelete={editing >= 0 ? () => remove(editing) : undefined}
 />

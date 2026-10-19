@@ -1,4 +1,4 @@
-import { loadStatus, type Status } from './api';
+import { loadStatus, type Status } from './api.ts';
 
 class StatusStore {
 	value = $state<Status | null>(null);

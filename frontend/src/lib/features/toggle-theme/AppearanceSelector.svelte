@@ -1,5 +1,5 @@
 <script lang="ts">
-	import Selector from '$lib/shared/ui/Selector.svelte';
+	import Selector from '#lib/shared/ui/Selector.svelte';
 	import { theme, type Theme } from './theme.svelte';
 
 	let { size = 'md' }: { size?: 'sm' | 'md' | 'lg' } = $props();

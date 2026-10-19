@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { status } from '$lib/entities/status/store.svelte';
-	import { ago, mb } from '$lib/shared/lib/api';
-	import Card from '$lib/shared/ui/Card.svelte';
+	import { status } from '#lib/entities/status/store.svelte.ts';
+	import { ago, mb } from '#lib/shared/lib/api.ts';
+	import Card from '#lib/shared/ui/Card.svelte';
 
 	const s = $derived(status.value);
 </script>

@@ -31,4 +31,5 @@ WORKDIR /app
 COPY --from=build /out/gateway /app/gateway
 
 EXPOSE 8080
+HEALTHCHECK --interval=2s --timeout=2s --start-period=30s --retries=2 CMD ["/app/gateway", "health"]
 ENTRYPOINT ["/app/gateway"]

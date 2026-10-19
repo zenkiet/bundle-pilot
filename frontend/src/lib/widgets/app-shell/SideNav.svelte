@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
-	import logo from '$lib/assets/favicon.svg';
-	import { config } from '$lib/entities/config/store.svelte';
-	import { status } from '$lib/entities/status/store.svelte';
-	import { ago } from '$lib/shared/lib/api';
-	import AppearanceSelector from '$lib/features/toggle-theme/AppearanceSelector.svelte';
+	import logo from '#lib/assets/favicon.svg';
+	import { config } from '#lib/entities/config/store.svelte.ts';
+	import { status } from '#lib/entities/status/store.svelte.ts';
+	import { ago } from '#lib/shared/lib/api.ts';
+	import AppearanceSelector from '#lib/features/toggle-theme/AppearanceSelector.svelte';
 	import { jump, nav, pages, sections, type Path } from './nav.svelte';
 
 	let { rail = false, onnavigate }: { rail?: boolean; onnavigate?: () => void } = $props();

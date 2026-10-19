@@ -2,13 +2,13 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { LogOut, RefreshCw } from '@lucide/svelte';
-	import { reloadGateway } from '$lib/entities/bundle/api';
-	import { config } from '$lib/entities/config/store.svelte';
-	import { status } from '$lib/entities/status/store.svelte';
-	import { ago, message } from '$lib/shared/lib/api';
-	import { session } from '$lib/shared/lib/session.svelte';
-	import Card from '$lib/shared/ui/Card.svelte';
-	import { toast } from '$lib/shared/ui/Toast.svelte';
+	import { reloadGateway } from '#lib/entities/bundle/api.ts';
+	import { config } from '#lib/entities/config/store.svelte.ts';
+	import { status } from '#lib/entities/status/store.svelte.ts';
+	import { ago, message } from '#lib/shared/lib/api.ts';
+	import { session } from '#lib/shared/lib/session.svelte.ts';
+	import Card from '#lib/shared/ui/Card.svelte';
+	import { toast } from '#lib/shared/ui/Toast.svelte';
 
 	const s = $derived(status.value);
 	let busy = $state(false);

@@ -1,11 +1,12 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { Search } from '@lucide/svelte';
-	import ReviewChanges from '$lib/features/save-config/ReviewChanges.svelte';
+	import ReviewChanges from '#lib/features/save-config/ReviewChanges.svelte';
 
 	let { onsearch }: { onsearch: () => void } = $props();
 	const titles: Record<string, [string, string]> = {
 		upload: ['Upload bundle', 'Zips only. Verified before they can serve.'],
+		history: ['History', 'Every saved config, newest first, and who saved it.'],
 		settings: ['Settings', 'What the setup wizard asked, saved together as one config.pb.']
 	};
 	const [title, sub] = $derived(

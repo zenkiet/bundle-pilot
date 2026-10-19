@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { File, FileArchive, X } from '@lucide/svelte';
-	import BundleMenu from '$lib/features/manage-bundle/BundleMenu.svelte';
-	import { mb } from '$lib/shared/lib/api';
-	import Card from '$lib/shared/ui/Card.svelte';
+	import BundleMenu from '#lib/features/manage-bundle/BundleMenu.svelte';
+	import { mb } from '#lib/shared/lib/api.ts';
+	import Card from '#lib/shared/ui/Card.svelte';
 	import { queue, type ItemStatus } from './queue.svelte';
 
 	const badge: Record<ItemStatus, [string, string]> = {

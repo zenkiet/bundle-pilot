@@ -9,8 +9,8 @@
 
 <script lang="ts" generics="T extends string">
 	import { Check, ChevronDown } from '@lucide/svelte';
-	import { clickOutside } from '$lib/shared/lib/actions';
-	import { media } from '$lib/shared/lib/media.svelte';
+	import { clickOutside } from '#lib/shared/lib/actions.ts';
+	import { media } from '#lib/shared/lib/media.svelte.ts';
 	import Sheet from './Sheet.svelte';
 
 	let {

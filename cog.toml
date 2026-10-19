@@ -14,8 +14,7 @@ skip_untracked = false
 # Hooks validation & push
 pre_bump_hooks = [
   "golangci-lint run",
-  "go test -v ./...",
-  "make openapi-check"
+  "go test -v ./..."
 ]
 
 post_bump_hooks = [

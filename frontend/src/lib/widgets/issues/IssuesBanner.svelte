@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { config } from '$lib/entities/config/store.svelte';
-	import { status } from '$lib/entities/status/store.svelte';
-	import Banner from '$lib/shared/ui/Banner.svelte';
+	import { config } from '#lib/entities/config/store.svelte.ts';
+	import { status } from '#lib/entities/status/store.svelte.ts';
+	import Banner from '#lib/shared/ui/Banner.svelte';
 
 	const errors = $derived([
 		...config.errors,

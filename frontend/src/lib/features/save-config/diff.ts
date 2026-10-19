@@ -3,9 +3,9 @@ import {
 	RuleSchema,
 	SourceSchema,
 	type Config
-} from '$lib/entities/config/gen/bundlepilot/config/v1/config_pb';
+} from '#lib/entities/config/gen/bundlepilot/config/v1/config_pb.ts';
 
-export interface Change {
+interface Change {
 	what: string;
 	diff: string;
 	kind: 'added' | 'changed' | 'removed';

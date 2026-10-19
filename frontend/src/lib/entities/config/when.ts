@@ -22,10 +22,13 @@ export function fromRows(rows: WhenRow[]): JsonObject {
 	return obj;
 }
 
+// parseValue keeps JSON types, except a number JSON.parse would rewrite (past 2^53, or 1.10):
+// that stays text, so the gateway compares the digits as typed.
 function parseValue(text: string): JsonValue {
 	if (/^(-?\d+(\.\d+)?|true|false|\[.*\])$/s.test(text)) {
 		try {
-			return JSON.parse(text) as JsonValue;
+			const v = JSON.parse(text) as JsonValue;
+			if (typeof v !== 'number' || String(v) === text) return v;
 		} catch {
 			/* keep as text */
 		}

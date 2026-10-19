@@ -1,12 +1,12 @@
-import { uploadBundle } from '$lib/entities/bundle/api';
-import { config } from '$lib/entities/config/store.svelte';
-import { status } from '$lib/entities/status/store.svelte';
-import { message } from '$lib/shared/lib/api';
-import { toast } from '$lib/shared/ui/Toast.svelte';
+import { uploadBundle } from '#lib/entities/bundle/api.ts';
+import { config } from '#lib/entities/config/store.svelte.ts';
+import { status } from '#lib/entities/status/store.svelte.ts';
+import { message } from '#lib/shared/lib/api.ts';
+import { toast } from '#lib/shared/ui/Toast.svelte';
 
 export type ItemStatus = 'skipped' | 'queued' | 'uploading' | 'verified' | 'error';
 
-export interface QueueItem {
+interface QueueItem {
 	id: number;
 	file: File;
 	status: ItemStatus;
@@ -57,7 +57,7 @@ class UploadQueue {
 	async start() {
 		if (this.running) return;
 		this.running = true;
-		let newest = '';
+		const uploaded: string[] = [];
 		for (const it of this.items) {
 			if (it.status !== 'queued') continue;
 			it.status = 'uploading';
@@ -65,23 +65,24 @@ class UploadQueue {
 				const r = await uploadBundle(it.file, (p) => (it.pct = p));
 				it.status = 'verified';
 				it.note = `${r.files} files · ${r.replaced ? 'replaced the old zip' : 'new'} · reloaded in ${r.reload_ms} ms`;
-				newest = r.version;
+				uploaded.push(r.version);
 			} catch (e) {
 				it.status = 'error';
 				it.note = message(e);
 			}
 		}
 		await status.refresh();
+		// status lists bundles newest first, in the config's own version order
+		const newest = status.value?.bundles.find((b) => uploaded.includes(b.version))?.version;
 		if (this.setDefault && newest) {
-			config.draft.defaultBundle = newest;
 			const r = await config
-				.save()
-				.catch((e) => ({ saved: false, errors: [message(e)], issues: [] }));
+				.patch((c) => (c.defaultBundle = newest))
+				.catch((e) => ({ saved: false, errors: [message(e)] }));
 			toast(r.saved ? `${newest} is the default now` : (r.errors[0] ?? 'Default not saved'), {
 				error: !r.saved
 			});
 			await status.refresh();
-		} else if (newest)
+		} else if (uploaded.length)
 			toast(`${this.verified} bundle${this.verified === 1 ? '' : 's'} verified and on disk`);
 		this.running = false;
 	}

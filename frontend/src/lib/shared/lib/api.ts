@@ -7,6 +7,7 @@ export const unauthorized = new Error('sign in required');
 export async function request(url: string, init: RequestInit = {}): Promise<Response> {
 	const headers = new Headers(init.headers);
 	if (session.header) headers.set('Authorization', session.header);
+	if (session.setup) headers.set('X-Setup-Token', session.setup);
 	const res = await fetch(url, { cache: 'no-store', ...init, headers });
 	if (res.status === 401) {
 		session.clear();

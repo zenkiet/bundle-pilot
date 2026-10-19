@@ -1,13 +1,18 @@
 <script lang="ts">
 	import { create } from '@bufbuild/protobuf';
-	import { AuthSchema } from '$lib/entities/config/gen/bundlepilot/config/v1/config_pb';
-	import { config } from '$lib/entities/config/store.svelte';
-	import Card from '$lib/shared/ui/Card.svelte';
+	import { AuthSchema } from '#lib/entities/config/gen/bundlepilot/config/v1/config_pb.ts';
+	import { config } from '#lib/entities/config/store.svelte.ts';
+	import Card from '#lib/shared/ui/Card.svelte';
 
 	let user = $derived(config.saved.auth?.username ?? 'admin');
 	let password = $state('');
 	let confirm = $state('');
 	const ok = $derived(password.length >= 8 && password === confirm);
+	// Once saved, the new password is in the hash: clear it so the draft does not set it again.
+	$effect(() => {
+		void config.saved.auth;
+		password = confirm = '';
+	});
 	$effect(() => {
 		const cur = config.saved.auth;
 		config.draft.auth =

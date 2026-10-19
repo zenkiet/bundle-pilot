@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { Upload } from '@lucide/svelte';
-	import FileDropzone from '$lib/features/upload-bundle/FileDropzone.svelte';
-	import { queue } from '$lib/features/upload-bundle/queue.svelte';
-	import UploadQueue from '$lib/features/upload-bundle/UploadQueue.svelte';
-	import Card from '$lib/shared/ui/Card.svelte';
-	import Switch from '$lib/shared/ui/Switch.svelte';
-	import ChecksCard from '$lib/widgets/upload/ChecksCard.svelte';
-	import DestinationCard from '$lib/widgets/upload/DestinationCard.svelte';
+	import FileDropzone from '#lib/features/upload-bundle/FileDropzone.svelte';
+	import { queue } from '#lib/features/upload-bundle/queue.svelte.ts';
+	import UploadQueue from '#lib/features/upload-bundle/UploadQueue.svelte';
+	import Card from '#lib/shared/ui/Card.svelte';
+	import Switch from '#lib/shared/ui/Switch.svelte';
+	import ChecksCard from '#lib/widgets/upload/ChecksCard.svelte';
+	import DestinationCard from '#lib/widgets/upload/DestinationCard.svelte';
 
 	const rejected = $derived(queue.skipped.map((i) => i.file.name).join(', '));
 	const label = $derived(
@@ -73,7 +73,7 @@
 				<Switch
 					bind:checked={queue.setDefault}
 					label="Set the newest verified bundle as default"
-					desc="Saves the config right after the last upload."
+					desc="Saves only the default, right after the last upload: the highest version uploaded."
 				/>
 			</Card>
 			<ChecksCard />

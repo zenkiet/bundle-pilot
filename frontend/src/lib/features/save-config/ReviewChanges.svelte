@@ -1,10 +1,10 @@
 <script lang="ts">
-	import { config } from '$lib/entities/config/store.svelte';
-	import { clickOutside } from '$lib/shared/lib/actions';
-	import { media } from '$lib/shared/lib/media.svelte';
-	import Sheet from '$lib/shared/ui/Sheet.svelte';
-	import { diff } from './diff';
-	import { saveAll } from './save';
+	import { config } from '#lib/entities/config/store.svelte.ts';
+	import { clickOutside } from '#lib/shared/lib/actions.ts';
+	import { media } from '#lib/shared/lib/media.svelte.ts';
+	import Sheet from '#lib/shared/ui/Sheet.svelte';
+	import { diff } from './diff.ts';
+	import { saveAll } from './save.ts';
 
 	let { size = 'md' }: { size?: 'sm' | 'md' } = $props();
 	let open = $state(false);

@@ -1,8 +1,8 @@
 <script lang="ts">
-	import { config } from '$lib/entities/config/store.svelte';
-	import { diff } from '$lib/features/save-config/diff';
-	import ReviewChanges from '$lib/features/save-config/ReviewChanges.svelte';
-	import { saveAll } from '$lib/features/save-config/save';
+	import { config } from '#lib/entities/config/store.svelte.ts';
+	import { diff } from '#lib/features/save-config/diff.ts';
+	import ReviewChanges from '#lib/features/save-config/ReviewChanges.svelte';
+	import { saveAll } from '#lib/features/save-config/save.ts';
 
 	const n = $derived(diff(config.saved, config.draft).length);
 </script>

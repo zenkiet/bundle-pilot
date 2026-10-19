@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { CircleCheck } from '@lucide/svelte';
-	import { status } from '$lib/entities/status/store.svelte';
-	import Card from '$lib/shared/ui/Card.svelte';
+	import { status } from '#lib/entities/status/store.svelte.ts';
+	import Card from '#lib/shared/ui/Card.svelte';
 
 	const checks = $derived([
 		['Is a .zip', 'Anything else is skipped in the browser'],
