@@ -12,10 +12,9 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/github/license/zenkiet/bundle-pilot?color=0f2a3a" alt="License"></a>
   <a href="https://github.com/zenkiet/bundle-pilot/releases"><img src="https://img.shields.io/github/v/release/zenkiet/bundle-pilot?color=f5b400" alt="Release"></a>
-  <a href="https://github.com/zenkiet/bundle-pilot/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/zenkiet/bundle-pilot/release.yml?label=release" alt="Release workflow"></a>
   <a href="https://go.dev"><img src="https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white" alt="Go"></a>
   <a href="https://svelte.dev"><img src="https://img.shields.io/badge/Admin%20UI-Svelte%205-FF3E00?logo=svelte&logoColor=white" alt="Svelte"></a>
-  <a href="libs/README.md"><img src="https://img.shields.io/badge/SDK-Angular%2019%2B-DD0031?logo=angular&logoColor=white" alt="Angular SDK"></a>
+  <a href="libs/README.md"><img src="https://img.shields.io/badge/SDK-Angular%2018%2B-DD0031?logo=angular&logoColor=white" alt="Angular SDK"></a>
   <a href="https://github.com/zenkiet/bundle-pilot/pkgs/container/bundle-pilot"><img src="https://img.shields.io/badge/ghcr.io-zenkiet%2Fbundle--pilot-2496ED?logo=docker&logoColor=white" alt="Container image"></a>
   <a href="https://github.com/zenkiet/bundle-pilot/issues"><img src="https://img.shields.io/badge/PRs-welcome-3fb950" alt="PRs welcome"></a>
 </p>
@@ -91,7 +90,9 @@ Three things decide, in this order:
 |---|---|
 | **Builds side by side** | Old and new versions serve at once; hashed files resolve across all of them, so a session that was open during a switch never breaks. |
 | **Targeting without code** | Pick users by store, tenant, user id, app version, backend version, or a percentage that only grows as you raise it. |
-| **An admin UI** | Upload zips, edit rules, test a decision before saving, watch what is being served. Works on a phone as well as a desktop. |
+| **An admin UI** | Upload zips, edit rules, test a decision before saving, watch what is being served, block a bad build in one click, restore any earlier config. Works on a phone as well as a desktop. |
+| **Safe for a team** | Saves never overwrite a newer one, every save is kept with who made it, and CI gets scoped API tokens instead of the admin password. |
+| **Over-the-air aware** | A build can require a minimum native app version; older apps keep the closest build they can run. |
 | **A first run that sets itself up** | Project name, admin password, bundle source and default build in five steps; the admin API is then protected by HTTP Basic auth. |
 | **Bundles from a folder or a bucket** | Point it at a directory, or at S3, Cloudflare R2, MinIO and the like, and it mirrors the zips by itself. |
 | **Signed bundles** | Optionally, so only builds signed with your key can serve. |
@@ -111,20 +112,21 @@ docker run -p 8080:8080 -v "$PWD/dist:/app/dist" ghcr.io/zenkiet/bundle-pilot
 ```
 
 Open `http://localhost:8080/__gateway/ui/`. The first visit runs the setup
-wizard; after that, the app itself is served at `http://localhost:8080/` and
+wizard, which asks for the setup token the gateway printed to its log
+(`docker logs`); after that, the app itself is served at `http://localhost:8080/` and
 the newest build is the default until you say otherwise.
 
 ### Or run the binary
 
 Prefer a binary? Download one from the
 [releases](https://github.com/zenkiet/bundle-pilot/releases) and run
-`DIST=./dist ./bundle-pilot`. Everything on disk is two things: the
-`versions/` folder and one `config.pb` written by the UI.
+`DIST=./dist ./bundle-pilot`. Everything on disk is the `versions/` folder,
+one `config.pb` written by the UI, and the `history/` of its saves.
 
 ### Connect your app
 
 Then teach the app to ask. For Angular, one provider does it; for any other
-framework, a few lines of fetch. See [Client libraries](#client-libraries).
+framework, `@bundle-pilot/core`. See [Client libraries](#client-libraries).
 
 ## A rollout, step by step
 
@@ -135,8 +137,9 @@ framework, a few lines of fetch. See [Client libraries](#client-libraries).
 3. **Widen.** Change the rule to a list of stores, then to `10%` of users, then
    `50%`. The percentage is stable per user, so raising it only adds people.
 4. **Finish or back out.** Make `4.80.0` the default and delete the rule, or,
-   if something is wrong, delete the rule and the pilot group is back on
-   `4.78.0` at their next visit.
+   if something is wrong, block `4.80.0` from its menu: every rule pointing at
+   it pauses at once and the pilot group is back on `4.78.0` at their next
+   page. Unblock it once fixed, or restore an earlier config from History.
 
 The same config, written as JSON:
 
@@ -157,19 +160,21 @@ The app has to send its facts and reload when the answer changes. The
 
 | Package | For | Status |
 |---|---|---|
-| `@bundle-pilot/angular` | Angular 19 to 22, one `provideBundlePilot()` call | Ready |
+| `@bundle-pilot/angular` | Angular 18 to 22, one `provideBundlePilot()` call | Ready |
 | `@bundle-pilot/core` | Any framework or plain JavaScript, the same logic without Angular | Ready |
 | React and Vue adapters | Thin wrappers over `core` | Planned |
 
 ```ts
-// app.config.ts
+// app.config.ts: every route now follows the gateway's pick for these facts
 provideBundlePilot({
-  facts: () => ({ backend: settings.backendVersion, storeID: settings.storeId }),
-  resyncOn: () => inject(AuthService).user$,
+  facts: () => {
+    const store = inject(StoreService);
+    return store.id ? { storeID: store.id, backend: store.posVersion } : null;
+  },
 });
 ```
 
-Setup, options and the plain fetch snippet are in [libs/README.md](libs/README.md).
+Setup and options are in [libs/README.md](libs/README.md).
 
 ## Admin UI
 
@@ -194,23 +199,24 @@ anything.
 
 ## Building from source
 
-Requires Go 1.27, Node 22 and pnpm.
+Requires Go 1.27, Node 26 and pnpm.
 
 ```sh
-make ui             # build the admin UI into internal/ui/build
+make ui             # build the admin UI into internal/ui/build/app
 make build          # bin/gateway, with the UI embedded
 make gen            # regenerate Go and TypeScript from proto/
 make lint           # golangci-lint, including layer rules
 docker compose up --build
 ```
 
-Releases are built by GoReleaser from a `v*` tag: archives for macOS (Intel
-and Apple silicon), Windows and Linux, and a multi-arch image on
-`ghcr.io/zenkiet/bundle-pilot`.
+Jenkins releases every `vX.Y.Z` tag at that one version: archives for macOS
+(Intel and Apple silicon), Windows and Linux, a multi-arch image on
+`ghcr.io/zenkiet/bundle-pilot`, and the npm packages. See
+[.jenkins/README.md](.jenkins/README.md).
 
 ## Contributing
 
-Bug reports, feature requests and pull requests are welcome. Please open an issue before starting large changes so the design can be agreed first; every user-facing change in Soteria starts as a mockup.
+Bug reports, feature requests and pull requests are welcome. Please open an issue before starting large changes so the design can be agreed first; every user-facing change in Bundle Pilot starts as a mockup.
 
 ## License
 

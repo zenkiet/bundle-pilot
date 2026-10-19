@@ -1,9 +1,10 @@
 version: 2
 
+# dist/ is the gateway's own data directory, which --clean would wipe.
+dist: release
+
 before:
   hooks:
-    - go mod tidy
-    - go generate ./...
     - make ui
 
 builds:
@@ -15,7 +16,7 @@ builds:
     flags:
       - -trimpath
     ldflags:
-      - -s -w
+      - -s -w -X github.com/zenkiet/bundle-pilot/internal/handler.build={{ .Version }}
     goos:
       - linux
       - darwin
@@ -42,6 +43,7 @@ archives:
         formats: [zip]
     files:
       - README.md
+      - LICENSE
 
 checksum:
   name_template: checksums.txt
@@ -87,6 +89,7 @@ release:
   github:
     owner: zenkiet
     name: bundle-pilot
+  replace_existing_artifacts: true # a re-run of the same tag replaces the assets
   footer: >-
 
     ---

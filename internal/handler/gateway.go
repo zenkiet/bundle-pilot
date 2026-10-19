@@ -124,13 +124,15 @@ type syncStatus struct {
 
 var (
 	started = time.Now()
-	build   = func() string {
-		if bi, ok := debug.ReadBuildInfo(); ok {
-			return bi.Main.Version
-		}
-		return ""
-	}()
+	build   string // set at release: -ldflags "-X github.com/zenkiet/bundle-pilot/internal/handler.build=1.2.3"
 )
+
+// init falls back to the version Go stamps from git, for builds made by hand.
+func init() {
+	if bi, ok := debug.ReadBuildInfo(); ok && build == "" {
+		build = bi.Main.Version
+	}
+}
 
 func (rt *Router) status(w http.ResponseWriter, _ *http.Request) {
 	snap := rt.cat.Current()
