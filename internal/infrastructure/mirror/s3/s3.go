@@ -19,6 +19,7 @@ import (
 	"github.com/zenkiet/bundle-pilot/internal/infrastructure/mirror"
 )
 
+// Store lists, reads and writes the zips under prefix in one bucket.
 type Store struct {
 	client *s3.Client
 	bucket string
@@ -33,7 +34,8 @@ func New(src domain.Source) (*Store, error) {
 		config.WithRequestChecksumCalculation(aws.RequestChecksumCalculationWhenRequired),
 	}
 	if src.AccessKeyID != "" {
-		opts = append(opts, config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(src.AccessKeyID, src.SecretAccessKey, "")))
+		keys := credentials.NewStaticCredentialsProvider(src.AccessKeyID, src.SecretAccessKey, "")
+		opts = append(opts, config.WithCredentialsProvider(keys))
 	}
 	cfg, err := config.LoadDefaultConfig(context.Background(), opts...)
 	if err != nil {
@@ -57,7 +59,11 @@ func (s *Store) List(ctx context.Context) ([]mirror.Object, error) {
 			return nil, err
 		}
 		for _, o := range page.Contents {
-			out = append(out, mirror.Object{Key: strings.TrimPrefix(aws.ToString(o.Key), s.prefix), Size: aws.ToInt64(o.Size), ModTime: aws.ToTime(o.LastModified)})
+			out = append(out, mirror.Object{
+				Key:     strings.TrimPrefix(aws.ToString(o.Key), s.prefix),
+				Size:    aws.ToInt64(o.Size),
+				ModTime: aws.ToTime(o.LastModified),
+			})
 		}
 	}
 	return out, nil
@@ -73,7 +79,14 @@ func (s *Store) Get(ctx context.Context, key string) (io.ReadCloser, error) {
 
 func (s *Store) Put(ctx context.Context, key string, body io.ReadSeeker, size int64) (time.Time, error) {
 	k := aws.String(s.prefix + key)
-	if _, err := s.client.PutObject(ctx, &s3.PutObjectInput{Bucket: &s.bucket, Key: k, Body: body, ContentLength: aws.Int64(size), ContentType: aws.String("application/zip")}); err != nil {
+	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:        &s.bucket,
+		Key:           k,
+		Body:          body,
+		ContentLength: aws.Int64(size),
+		ContentType:   aws.String("application/zip"),
+	})
+	if err != nil {
 		return time.Time{}, err
 	}
 	head, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: &s.bucket, Key: k})

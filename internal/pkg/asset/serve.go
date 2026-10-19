@@ -9,11 +9,12 @@ import (
 	"time"
 )
 
-// ServeHTTP sends the negotiated encoding through http.ServeContent; ranges get the identity body.
+// ServeHTTP sends the negotiated encoding through http.ServeContent; ranges get the identity body,
+// except on deflated entries over 1 MiB, which go out whole.
 // A read error aborts the response: encoded bodies have no Content-Length, so a short one would
 // otherwise end as a well-formed chunked reply.
 func (a *Asset) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if strings.Contains(r.Header.Get("Range"), ",") {
+	if a.noRange || strings.Contains(r.Header.Get("Range"), ",") {
 		r.Header.Del("Range") // a multi-range reader would outlive ServeContent: send it all
 	}
 	v := &a.v[identity]
@@ -63,12 +64,15 @@ func (a *Asset) ServeParts(w http.ResponseWriter, r *http.Request, etag string, 
 	http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(slices.Concat(head, body)))
 }
 
+// How an Accept-Encoding header answers for one encoding.
 const (
 	unset int8 = iota
 	refused
 	accepted
 )
 
+// negotiate picks the best encoding a has that the client accepts: brotli, then gzip, else
+// identity. q=0 refuses an encoding, and * stands for every encoding not named.
 func negotiate(accept []string, a *Asset) encoding {
 	if !a.encoded() || len(accept) == 0 {
 		return identity
@@ -83,7 +87,8 @@ func negotiate(accept []string, a *Asset) encoding {
 			if qZero(params) {
 				q = refused
 			}
-			switch name = strings.TrimSpace(name); {
+			name = strings.TrimSpace(name)
+			switch {
 			case strings.EqualFold(name, "br"):
 				br = q
 			case strings.EqualFold(name, "gzip"), strings.EqualFold(name, "x-gzip"):
@@ -108,6 +113,7 @@ func negotiate(accept []string, a *Asset) encoding {
 	return identity
 }
 
+// qZero reports whether params set q=0, which refuses the encoding.
 func qZero(params string) bool {
 	for params != "" {
 		var p string

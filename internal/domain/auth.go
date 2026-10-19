@@ -12,11 +12,13 @@ import (
 
 const pbkdf2Rounds = 600_000
 
+// Auth is the admin account; Hash comes from HashPassword.
 type Auth struct {
 	Username string `json:"username"`
 	Hash     string `json:"-"`
 }
 
+// HashPassword returns a salted hash: pbkdf2-sha256$<rounds>$<salt>$<key>.
 func HashPassword(password string) string {
 	salt := make([]byte, 16)
 	_, _ = rand.Read(salt)
@@ -25,6 +27,8 @@ func HashPassword(password string) string {
 	return "pbkdf2-sha256$" + strconv.Itoa(pbkdf2Rounds) + "$" + enc(salt) + "$" + enc(key)
 }
 
+// VerifyPassword reports whether password matches a hash from HashPassword. The rounds come
+// from the hash, so older hashes keep working if pbkdf2Rounds changes.
 func VerifyPassword(hash, password string) bool {
 	f := strings.Split(hash, "$")
 	if len(f) != 4 || f[0] != "pbkdf2-sha256" {

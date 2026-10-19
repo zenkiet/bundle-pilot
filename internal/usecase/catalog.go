@@ -2,7 +2,10 @@ package usecase
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"runtime/debug"
@@ -15,26 +18,37 @@ import (
 	"github.com/zenkiet/bundle-pilot/internal/gen/configv1"
 )
 
+// Source is where bundles and config.pb are stored; bundlefs implements it.
 type Source interface {
+	// Stamp changes whenever something Load reads changes.
 	Stamp() uint64
 	Load() (domain.Inventory, error)
 	ReadConfig() (*configv1.Config, error)
-	WriteConfig(*configv1.Config) error
+	WriteConfig(pb *configv1.Config, by string) error
+	History() ([]domain.Revision, error)
+	Revision(id string) (*configv1.Config, error)
 	PutBundle(ctx context.Context, name string, r io.Reader) (files int, replaced bool, err error)
 	DeleteBundle(ctx context.Context, name string) error
 	OpenBundle(name string) (*os.File, error)
-	SyncState() (at time.Time, objects int, err string)
+	SyncState() (at time.Time, objects int, lastErr string)
 }
 
+// ErrNotApplied means a config was saved but is not serving yet: the reload after the
+// write failed, and the watcher retries it.
+var ErrNotApplied = errors.New("saved, but the reload that applies it failed")
+
+// Catalog holds the snapshot being served. Every change to what is stored (config saves,
+// uploads, deletes) goes through it and ends with a reload.
 type Catalog struct {
-	src     Source
-	log     *slog.Logger
-	mu      sync.Mutex
-	seen    atomic.Uint64
-	retry   atomic.Bool
-	reloads atomic.Uint64
-	lastErr atomic.Pointer[string]
-	cur     atomic.Pointer[domain.Snapshot]
+	src       Source
+	log       *slog.Logger
+	reloading sync.Mutex // one reload at a time
+	writing   sync.Mutex // one config update at a time
+	seen      atomic.Uint64
+	retry     atomic.Bool
+	reloads   atomic.Uint64
+	lastErr   atomic.Pointer[string]
+	cur       atomic.Pointer[domain.Snapshot]
 }
 
 func NewCatalog(src Source, log *slog.Logger) *Catalog {
@@ -50,17 +64,51 @@ func (c *Catalog) Stats() (reloads uint64, lastErr string) {
 	return c.reloads.Load(), lastErr
 }
 
+// Config returns config.pb as stored, secrets included; fs.ErrNotExist before the first save.
 func (c *Catalog) Config() (*configv1.Config, error) { return c.src.ReadConfig() }
 
-func (c *Catalog) SaveConfig(pb *configv1.Config) error {
-	if err := c.src.WriteConfig(pb); err != nil {
+// UpdateConfig applies edit to the stored config, validates the result, saves it as by and
+// reloads. Updates run one at a time, so two read-modify-writes cannot lose each other. A
+// config.pb that cannot be read is never overwritten, because it holds the admin account.
+func (c *Catalog) UpdateConfig(by string, edit func(cur *configv1.Config) (*configv1.Config, error)) error {
+	c.writing.Lock()
+	defer c.writing.Unlock()
+	cur, err := c.src.ReadConfig()
+	snap := c.Current()
+	firstSave := snap == nil || snap.Setup != ""
+	switch {
+	case errors.Is(err, fs.ErrNotExist) && firstSave:
+		cur = &configv1.Config{}
+	case errors.Is(err, fs.ErrNotExist):
+		return errors.New("config.pb is missing: restore it, or restart the gateway to run setup again")
+	case err != nil:
+		return fmt.Errorf("config.pb is unreadable, so it is not overwritten: %w", err)
+	}
+	next, err := edit(cur)
+	if err == nil {
+		_, err = domain.ParseConfig(next)
+	}
+	if err != nil {
 		return err
 	}
-	return c.Reload()
+	domain.HashAuth(next)
+	if err := c.src.WriteConfig(next, by); err != nil {
+		return err
+	}
+	if err := c.Reload(); err != nil {
+		return fmt.Errorf("%w: %v", ErrNotApplied, err)
+	}
+	return nil
 }
 
-// PutBundle stores an uploaded zip and reloads; the upload itself runs
-// outside the lock so a slow client never blocks the watcher.
+// History lists the saved configs, newest first.
+func (c *Catalog) History() ([]domain.Revision, error) { return c.src.History() }
+
+// Revision returns one saved config, as clients see it.
+func (c *Catalog) Revision(id string) (*configv1.Config, error) { return c.src.Revision(id) }
+
+// PutBundle stores an uploaded zip and reloads. The upload itself runs outside the reload
+// lock, so a slow client never blocks the watcher.
 func (c *Catalog) PutBundle(ctx context.Context, name string, r io.Reader) (files int, replaced bool, err error) {
 	if files, replaced, err = c.src.PutBundle(ctx, name, r); err == nil {
 		err = c.Reload()
@@ -77,11 +125,13 @@ func (c *Catalog) DeleteBundle(ctx context.Context, name string) error {
 
 func (c *Catalog) OpenBundle(name string) (*os.File, error) { return c.src.OpenBundle(name) }
 
-func (c *Catalog) SyncState() (at time.Time, objects int, err string) { return c.src.SyncState() }
+func (c *Catalog) SyncState() (at time.Time, objects int, lastErr string) { return c.src.SyncState() }
 
+// Reload loads the source again and swaps in the new snapshot. On error the current snapshot
+// keeps serving.
 func (c *Catalog) Reload() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.reloading.Lock()
+	defer c.reloading.Unlock()
 	err := c.reload()
 	if err == nil {
 		c.reloads.Add(1)
@@ -93,8 +143,8 @@ func (c *Catalog) Reload() error {
 	return err
 }
 
-// reload records the stamp before loading, so a change landing mid-load
-// differs from it and triggers the next reload.
+// reload records the stamp before loading, so a change that lands mid-load leaves a different
+// stamp and triggers the next reload.
 func (c *Catalog) reload() error {
 	start := time.Now()
 	c.seen.Store(c.src.Stamp())
@@ -103,16 +153,11 @@ func (c *Catalog) reload() error {
 	if err != nil {
 		return err
 	}
-	prev, keep := c.cur.Load(), ""
+	prev, prevDefault := c.cur.Load(), ""
 	if prev != nil {
-		keep = prev.Default.Version
-		// Zips that vanish keep serving from their open files; the new config still applies.
-		if len(inv.Bundles) == 0 && len(prev.Bundles()) > 0 {
-			inv.Bundles = prev.Bundles()
-			inv.Errors = append(inv.Errors, "no bundles in versions/: serving the ones loaded before")
-		}
+		prevDefault = prev.Default.Version
 	}
-	snap := domain.NewSnapshot(inv, time.Now(), keep)
+	snap := domain.NewSnapshot(inv, time.Now(), prevDefault)
 	c.cur.Store(snap)
 	for _, e := range snap.Errors {
 		c.log.Error(e)
@@ -124,8 +169,13 @@ func (c *Catalog) reload() error {
 	for _, b := range snap.Bundles() {
 		versions = append(versions, b.Version)
 	}
-	c.log.Info("snapshot ready", "bundles", versions, "default", snap.Default.Version, "default_from", snap.DefaultFrom,
-		"base_path", snap.BasePath, "rules", len(snap.Config.Rules), "steps", len(snap.Config.Backend),
+	c.log.Info("snapshot ready",
+		"bundles", versions,
+		"default", snap.Default.Version,
+		"default_from", snap.DefaultFrom,
+		"base_path", snap.BasePath,
+		"rules", len(snap.Config.Rules),
+		"steps", len(snap.Config.Backend),
 		"took", time.Since(start).Round(time.Millisecond).String())
 	if prev == nil || !slices.Equal(prev.Bundles(), snap.Bundles()) {
 		debug.FreeOSMemory() // checking zips leaves tens of MiB of decoder garbage behind
@@ -133,8 +183,8 @@ func (c *Catalog) reload() error {
 	return nil
 }
 
-// Watch reloads on any change on disk, and retries failures that need none
-// with a backoff doubling up to a minute.
+// Watch reloads after any change on disk. A failure that may clear by itself is retried with
+// a backoff that doubles up to a minute.
 func (c *Catalog) Watch(ctx context.Context, every time.Duration) {
 	t := time.NewTicker(every)
 	defer t.Stop()
@@ -149,7 +199,8 @@ func (c *Catalog) Watch(ctx context.Context, every time.Duration) {
 			if !c.retry.Load() {
 				continue
 			}
-			if waited += every; waited < backoff {
+			waited += every
+			if waited < backoff {
 				continue
 			}
 		}

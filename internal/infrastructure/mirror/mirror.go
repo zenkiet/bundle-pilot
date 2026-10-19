@@ -32,22 +32,24 @@ type Object struct {
 	ModTime time.Time
 }
 
+// Mirror copies a Store's zips into dir. The fields under mu describe the last sync.
 type Mirror struct {
 	store Store
 	dir   string
-	name  string
+	name  string // the source, for logs
 	log   *slog.Logger
 	mu    sync.Mutex
-	err   string
-	gen   uint64
-	at    time.Time
-	n     int
+	err   string    // the last sync error, "" after a success
+	gen   uint64    // moves each time err changes
+	at    time.Time // when the last sync ran
+	n     int       // how many zips the store listed
 }
 
 func New(store Store, dir, name string, log *slog.Logger) *Mirror {
 	return &Mirror{store: store, dir: dir, name: name, log: log}
 }
 
+// Run syncs every interval until ctx is done.
 func (m *Mirror) Run(ctx context.Context, every time.Duration) {
 	t := time.NewTicker(every)
 	defer t.Stop()
@@ -62,13 +64,13 @@ func (m *Mirror) Run(ctx context.Context, every time.Duration) {
 }
 
 // State returns the last sync error and a counter that moves when it changes.
-func (m *Mirror) State() (string, uint64) {
+func (m *Mirror) State() (lastErr string, gen uint64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.err, m.gen
 }
 
-func (m *Mirror) Status() (at time.Time, objects int, err string) {
+func (m *Mirror) Status() (at time.Time, objects int, lastErr string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.at, m.n, m.err
@@ -108,7 +110,8 @@ func (m *Mirror) sync(ctx context.Context) (int, error) {
 	}
 	want := map[string]Object{}
 	for _, o := range objs {
-		if strings.HasSuffix(o.Key, ".zip") && !strings.ContainsAny(o.Key, `/\`) && !strings.HasPrefix(o.Key, ".") {
+		inFolder := strings.ContainsAny(o.Key, `/\`)
+		if strings.HasSuffix(o.Key, ".zip") && !inFolder && !strings.HasPrefix(o.Key, ".") {
 			want[o.Key] = o
 		}
 	}
@@ -130,21 +133,25 @@ func (m *Mirror) sync(ctx context.Context) (int, error) {
 	var errs []error
 	for _, name := range slices.Sorted(maps.Keys(want)) {
 		o := want[name]
-		if info, err := root.Stat(name); err == nil && info.Size() == o.Size && info.ModTime().Unix() == o.ModTime.Unix() {
-			continue
+		info, err := root.Stat(name)
+		if err == nil && info.Size() == o.Size && info.ModTime().Unix() == o.ModTime.Unix() {
+			continue // already fetched
 		}
 		start := time.Now()
 		if err := m.fetch(ctx, root, o); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", name, err))
 			continue
 		}
-		m.log.Info("bundle fetched", "source", m.name, "zip", name, "bytes", o.Size, "took", time.Since(start).Round(time.Millisecond).String())
+		m.log.Info("bundle fetched",
+			"source", m.name, "zip", name, "bytes", o.Size, "took", time.Since(start).Round(time.Millisecond).String())
 	}
 	for _, e := range entries {
-		if name := e.Name(); strings.HasSuffix(name, ".zip") && want[name].Key == "" {
-			if root.Remove(name) == nil {
-				m.log.Info("bundle removed", "source", m.name, "zip", name)
-			}
+		name := e.Name()
+		if _, wanted := want[name]; wanted || !strings.HasSuffix(name, ".zip") {
+			continue
+		}
+		if root.Remove(name) == nil {
+			m.log.Info("bundle removed", "source", m.name, "zip", name)
 		}
 	}
 	return len(want), errors.Join(errs...)

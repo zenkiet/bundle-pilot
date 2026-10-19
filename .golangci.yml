@@ -15,3 +15,37 @@ linters:
     # Complexity
     - gocyclo
     - bodyclose
+
+    # Layers: pkg ← domain ← usecase ← handler; infrastructure implements usecase's ports
+    - depguard
+  settings:
+    depguard:
+      rules:
+        domain:
+          files: ["**/internal/domain/**"]
+          deny:
+            - { pkg: github.com/zenkiet/bundle-pilot/internal/usecase, desc: domain does not know its callers }
+            - { pkg: github.com/zenkiet/bundle-pilot/internal/infrastructure, desc: domain does no I/O }
+            - { pkg: github.com/zenkiet/bundle-pilot/internal/handler, desc: domain does not know HTTP }
+            - { pkg: os, desc: domain does no I/O }
+        pkg:
+          files: ["**/internal/pkg/**"]
+          deny:
+            - { pkg: github.com/zenkiet/bundle-pilot/internal/domain, desc: pkg is generic }
+            - { pkg: github.com/zenkiet/bundle-pilot/internal/usecase, desc: pkg is generic }
+            - { pkg: github.com/zenkiet/bundle-pilot/internal/infrastructure, desc: pkg is generic }
+            - { pkg: github.com/zenkiet/bundle-pilot/internal/handler, desc: pkg is generic }
+        usecase:
+          files: ["**/internal/usecase/**"]
+          deny:
+            - { pkg: github.com/zenkiet/bundle-pilot/internal/infrastructure, desc: usecase talks to ports, cmd wires adapters }
+            - { pkg: github.com/zenkiet/bundle-pilot/internal/handler, desc: usecase does not know HTTP }
+        handler:
+          files: ["**/internal/handler/**"]
+          deny:
+            - { pkg: github.com/zenkiet/bundle-pilot/internal/infrastructure, desc: handler goes through usecase }
+        infrastructure:
+          files: ["**/internal/infrastructure/**"]
+          deny:
+            - { pkg: github.com/zenkiet/bundle-pilot/internal/usecase, desc: adapters depend on domain only }
+            - { pkg: github.com/zenkiet/bundle-pilot/internal/handler, desc: adapters depend on domain only }

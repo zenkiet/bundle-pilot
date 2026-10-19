@@ -39,7 +39,11 @@ type Config struct {
 	// Shown in the admin UI: browser tab and sidebar heading.
 	ProjectName string `protobuf:"bytes,8,opt,name=project_name,json=projectName,proto3" json:"project_name,omitempty"`
 	// Label next to the name, e.g. production.
-	Environment   string `protobuf:"bytes,9,opt,name=environment,proto3" json:"environment,omitempty"`
+	Environment string `protobuf:"bytes,9,opt,name=environment,proto3" json:"environment,omitempty"`
+	// Bundles never served: set through /__gateway/blocked, kept by every config save.
+	Blocked []string `protobuf:"bytes,10,rep,name=blocked,proto3" json:"blocked,omitempty"`
+	// API tokens: set through /__gateway/tokens, kept by every config save.
+	Tokens        []*Token `protobuf:"bytes,11,rep,name=tokens,proto3" json:"tokens,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -137,6 +141,147 @@ func (x *Config) GetEnvironment() string {
 	return ""
 }
 
+func (x *Config) GetBlocked() []string {
+	if x != nil {
+		return x.Blocked
+	}
+	return nil
+}
+
+func (x *Config) GetTokens() []*Token {
+	if x != nil {
+		return x.Tokens
+	}
+	return nil
+}
+
+// Token lets a script call the admin API with "Authorization: Bearer <secret>".
+type Token struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Name  string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// read (status, config, history), upload (also adds bundles) or admin (everything).
+	Scope string `protobuf:"bytes,2,opt,name=scope,proto3" json:"scope,omitempty"`
+	// SHA-256 of the secret, hex: the secret is shown once, when the token is made.
+	Sha256 string `protobuf:"bytes,3,opt,name=sha256,proto3" json:"sha256,omitempty"`
+	// RFC 3339.
+	Created       string `protobuf:"bytes,4,opt,name=created,proto3" json:"created,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Token) Reset() {
+	*x = Token{}
+	mi := &file_bundlepilot_config_v1_config_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Token) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Token) ProtoMessage() {}
+
+func (x *Token) ProtoReflect() protoreflect.Message {
+	mi := &file_bundlepilot_config_v1_config_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Token.ProtoReflect.Descriptor instead.
+func (*Token) Descriptor() ([]byte, []int) {
+	return file_bundlepilot_config_v1_config_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *Token) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *Token) GetScope() string {
+	if x != nil {
+		return x.Scope
+	}
+	return ""
+}
+
+func (x *Token) GetSha256() string {
+	if x != nil {
+		return x.Sha256
+	}
+	return ""
+}
+
+func (x *Token) GetCreated() string {
+	if x != nil {
+		return x.Created
+	}
+	return ""
+}
+
+// Revision is one saved config in DIST/history, as clients see it: secrets masked.
+type Revision struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Who saved it: the admin's username, token:<name>, setup or cli.
+	By string `protobuf:"bytes,1,opt,name=by,proto3" json:"by,omitempty"`
+	// The Config, encoded.
+	Config        []byte `protobuf:"bytes,2,opt,name=config,proto3" json:"config,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Revision) Reset() {
+	*x = Revision{}
+	mi := &file_bundlepilot_config_v1_config_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Revision) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Revision) ProtoMessage() {}
+
+func (x *Revision) ProtoReflect() protoreflect.Message {
+	mi := &file_bundlepilot_config_v1_config_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Revision.ProtoReflect.Descriptor instead.
+func (*Revision) Descriptor() ([]byte, []int) {
+	return file_bundlepilot_config_v1_config_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *Revision) GetBy() string {
+	if x != nil {
+		return x.By
+	}
+	return ""
+}
+
+func (x *Revision) GetConfig() []byte {
+	if x != nil {
+		return x.Config
+	}
+	return nil
+}
+
 // Auth protects /__gateway/* except /__gateway/data and /healthz with HTTP Basic auth.
 type Auth struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
@@ -151,7 +296,7 @@ type Auth struct {
 
 func (x *Auth) Reset() {
 	*x = Auth{}
-	mi := &file_bundlepilot_config_v1_config_proto_msgTypes[1]
+	mi := &file_bundlepilot_config_v1_config_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -163,7 +308,7 @@ func (x *Auth) String() string {
 func (*Auth) ProtoMessage() {}
 
 func (x *Auth) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_config_v1_config_proto_msgTypes[1]
+	mi := &file_bundlepilot_config_v1_config_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -176,7 +321,7 @@ func (x *Auth) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Auth.ProtoReflect.Descriptor instead.
 func (*Auth) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_config_v1_config_proto_rawDescGZIP(), []int{1}
+	return file_bundlepilot_config_v1_config_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *Auth) GetUsername() string {
@@ -223,7 +368,7 @@ type Source struct {
 
 func (x *Source) Reset() {
 	*x = Source{}
-	mi := &file_bundlepilot_config_v1_config_proto_msgTypes[2]
+	mi := &file_bundlepilot_config_v1_config_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -235,7 +380,7 @@ func (x *Source) String() string {
 func (*Source) ProtoMessage() {}
 
 func (x *Source) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_config_v1_config_proto_msgTypes[2]
+	mi := &file_bundlepilot_config_v1_config_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -248,7 +393,7 @@ func (x *Source) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Source.ProtoReflect.Descriptor instead.
 func (*Source) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_config_v1_config_proto_rawDescGZIP(), []int{2}
+	return file_bundlepilot_config_v1_config_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *Source) GetType() string {
@@ -324,7 +469,7 @@ type Rule struct {
 
 func (x *Rule) Reset() {
 	*x = Rule{}
-	mi := &file_bundlepilot_config_v1_config_proto_msgTypes[3]
+	mi := &file_bundlepilot_config_v1_config_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -336,7 +481,7 @@ func (x *Rule) String() string {
 func (*Rule) ProtoMessage() {}
 
 func (x *Rule) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_config_v1_config_proto_msgTypes[3]
+	mi := &file_bundlepilot_config_v1_config_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -349,7 +494,7 @@ func (x *Rule) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Rule.ProtoReflect.Descriptor instead.
 func (*Rule) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_config_v1_config_proto_rawDescGZIP(), []int{3}
+	return file_bundlepilot_config_v1_config_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *Rule) GetId() string {
@@ -391,7 +536,7 @@ var File_bundlepilot_config_v1_config_proto protoreflect.FileDescriptor
 
 const file_bundlepilot_config_v1_config_proto_rawDesc = "" +
 	"\n" +
-	"\"bundlepilot/config/v1/config.proto\x12\x15bundlepilot.config.v1\x1a\x1cgoogle/protobuf/struct.proto\"\xc5\x03\n" +
+	"\"bundlepilot/config/v1/config.proto\x12\x15bundlepilot.config.v1\x1a\x1cgoogle/protobuf/struct.proto\"\x95\x04\n" +
 	"\x06Config\x12\x17\n" +
 	"\x06schema\x18\x01 \x01(\tR\a$schema\x125\n" +
 	"\x06source\x18\x02 \x01(\v2\x1d.bundlepilot.config.v1.SourceR\x06source\x12\x1f\n" +
@@ -402,10 +547,21 @@ const file_bundlepilot_config_v1_config_proto_rawDesc = "" +
 	"\x05rules\x18\x06 \x03(\v2\x1b.bundlepilot.config.v1.RuleR\x05rules\x12/\n" +
 	"\x04auth\x18\a \x01(\v2\x1b.bundlepilot.config.v1.AuthR\x04auth\x12!\n" +
 	"\fproject_name\x18\b \x01(\tR\vprojectName\x12 \n" +
-	"\venvironment\x18\t \x01(\tR\venvironment\x1a:\n" +
+	"\venvironment\x18\t \x01(\tR\venvironment\x12\x18\n" +
+	"\ablocked\x18\n" +
+	" \x03(\tR\ablocked\x124\n" +
+	"\x06tokens\x18\v \x03(\v2\x1c.bundlepilot.config.v1.TokenR\x06tokens\x1a:\n" +
 	"\fBackendEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"c\n" +
+	"\x05Token\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
+	"\x05scope\x18\x02 \x01(\tR\x05scope\x12\x16\n" +
+	"\x06sha256\x18\x03 \x01(\tR\x06sha256\x12\x18\n" +
+	"\acreated\x18\x04 \x01(\tR\acreated\"2\n" +
+	"\bRevision\x12\x0e\n" +
+	"\x02by\x18\x01 \x01(\tR\x02by\x12\x16\n" +
+	"\x06config\x18\x02 \x01(\fR\x06config\"c\n" +
 	"\x04Auth\x12\x1a\n" +
 	"\busername\x18\x01 \x01(\tR\busername\x12#\n" +
 	"\rpassword_hash\x18\x02 \x01(\tR\fpasswordHash\x12\x1a\n" +
@@ -438,26 +594,29 @@ func file_bundlepilot_config_v1_config_proto_rawDescGZIP() []byte {
 	return file_bundlepilot_config_v1_config_proto_rawDescData
 }
 
-var file_bundlepilot_config_v1_config_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_bundlepilot_config_v1_config_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_bundlepilot_config_v1_config_proto_goTypes = []any{
 	(*Config)(nil),          // 0: bundlepilot.config.v1.Config
-	(*Auth)(nil),            // 1: bundlepilot.config.v1.Auth
-	(*Source)(nil),          // 2: bundlepilot.config.v1.Source
-	(*Rule)(nil),            // 3: bundlepilot.config.v1.Rule
-	nil,                     // 4: bundlepilot.config.v1.Config.BackendEntry
-	(*structpb.Struct)(nil), // 5: google.protobuf.Struct
+	(*Token)(nil),           // 1: bundlepilot.config.v1.Token
+	(*Revision)(nil),        // 2: bundlepilot.config.v1.Revision
+	(*Auth)(nil),            // 3: bundlepilot.config.v1.Auth
+	(*Source)(nil),          // 4: bundlepilot.config.v1.Source
+	(*Rule)(nil),            // 5: bundlepilot.config.v1.Rule
+	nil,                     // 6: bundlepilot.config.v1.Config.BackendEntry
+	(*structpb.Struct)(nil), // 7: google.protobuf.Struct
 }
 var file_bundlepilot_config_v1_config_proto_depIdxs = []int32{
-	2, // 0: bundlepilot.config.v1.Config.source:type_name -> bundlepilot.config.v1.Source
-	4, // 1: bundlepilot.config.v1.Config.backend:type_name -> bundlepilot.config.v1.Config.BackendEntry
-	3, // 2: bundlepilot.config.v1.Config.rules:type_name -> bundlepilot.config.v1.Rule
-	1, // 3: bundlepilot.config.v1.Config.auth:type_name -> bundlepilot.config.v1.Auth
-	5, // 4: bundlepilot.config.v1.Rule.when:type_name -> google.protobuf.Struct
-	5, // [5:5] is the sub-list for method output_type
-	5, // [5:5] is the sub-list for method input_type
-	5, // [5:5] is the sub-list for extension type_name
-	5, // [5:5] is the sub-list for extension extendee
-	0, // [0:5] is the sub-list for field type_name
+	4, // 0: bundlepilot.config.v1.Config.source:type_name -> bundlepilot.config.v1.Source
+	6, // 1: bundlepilot.config.v1.Config.backend:type_name -> bundlepilot.config.v1.Config.BackendEntry
+	5, // 2: bundlepilot.config.v1.Config.rules:type_name -> bundlepilot.config.v1.Rule
+	3, // 3: bundlepilot.config.v1.Config.auth:type_name -> bundlepilot.config.v1.Auth
+	1, // 4: bundlepilot.config.v1.Config.tokens:type_name -> bundlepilot.config.v1.Token
+	7, // 5: bundlepilot.config.v1.Rule.when:type_name -> google.protobuf.Struct
+	6, // [6:6] is the sub-list for method output_type
+	6, // [6:6] is the sub-list for method input_type
+	6, // [6:6] is the sub-list for extension type_name
+	6, // [6:6] is the sub-list for extension extendee
+	0, // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_bundlepilot_config_v1_config_proto_init() }
@@ -471,7 +630,7 @@ func file_bundlepilot_config_v1_config_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_bundlepilot_config_v1_config_proto_rawDesc), len(file_bundlepilot_config_v1_config_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   5,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

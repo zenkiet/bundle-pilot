@@ -43,12 +43,16 @@ func (rt *Router) data(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	dry := r.Header.Get("X-Dry-Run") != ""
 	b, via, err := snap.Decide(facts, time.Now())
 	if err != nil {
+		if !dry {
+			rt.count("refused", "") // fail-closed answers stop OTA updates: keep them visible
+		}
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if r.Header.Get("X-Dry-Run") == "" {
+	if !dry {
 		rt.apply(w, r, snap, b, via)
 	}
 	writeJSON(w, http.StatusOK, struct {
@@ -68,11 +72,19 @@ func (rt *Router) apply(w http.ResponseWriter, r *http.Request, snap *domain.Sna
 	case cookie != "":
 		setBundle(w, r, "", -1, cur.Version != b.Version)
 	}
-	rt.mu.Lock()
-	rt.decisions[via]++
-	rt.mu.Unlock()
+	rt.count(via, b.Version)
 	if cur.Version != b.Version {
 		rt.log.Debug("bundle switch", "from", cur.Version, "to", b.Version, "via", via)
+	}
+}
+
+// count tallies a decision by how it was made and by the bundle it chose.
+func (rt *Router) count(via, bundle string) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	rt.byVia[via]++
+	if bundle != "" {
+		rt.byBundle[bundle]++
 	}
 }
 
@@ -100,6 +112,8 @@ type bundleStatus struct {
 	Bytes    int64     `json:"bytes"`
 	ZipBytes int64     `json:"zip_bytes"`
 	ModTime  time.Time `json:"mod_time"`
+	Native   string    `json:"native,omitempty"`
+	Blocked  bool      `json:"blocked,omitempty"`
 }
 
 type syncStatus struct {
@@ -122,43 +136,68 @@ func (rt *Router) status(w http.ResponseWriter, _ *http.Request) {
 	snap := rt.cat.Current()
 	reloads, lastErr := rt.cat.Stats()
 	rt.mu.Lock()
-	decisions := maps.Clone(rt.decisions)
+	byVia, byBundle := maps.Clone(rt.byVia), maps.Clone(rt.byBundle)
 	rt.mu.Unlock()
 	out := struct {
-		Version     string            `json:"version"`
-		StartedAt   time.Time         `json:"started_at"`
-		Project     string            `json:"project_name"`
-		Environment string            `json:"environment"`
-		Setup       bool              `json:"setup_required"`
-		Auth        bool              `json:"auth"`
-		Default     string            `json:"default"`
-		DefaultFrom string            `json:"default_from"`
-		BasePath    string            `json:"base_path"`
-		Source      string            `json:"source"`
-		Sync        *syncStatus       `json:"sync,omitempty"`
-		Signing     bool              `json:"signing"`
-		LoadedAt    time.Time         `json:"loaded_at"`
-		Reloads     uint64            `json:"reloads"`
-		LastError   string            `json:"last_error"`
-		Errors      []string          `json:"errors"`
-		Resident    uint64            `json:"resident_bytes"`
-		Bundles     []bundleStatus    `json:"bundles"`
-		Rules       []domain.Rule     `json:"rules"`
-		Backend     domain.Mapping    `json:"backend"`
-		Decisions   map[string]uint64 `json:"decisions"`
-		Issues      []string          `json:"issues"`
+		Version           string            `json:"version"`
+		StartedAt         time.Time         `json:"started_at"`
+		Project           string            `json:"project_name"`
+		Environment       string            `json:"environment"`
+		Setup             bool              `json:"setup_required"`
+		Auth              bool              `json:"auth"`
+		Default           string            `json:"default"`
+		DefaultFrom       string            `json:"default_from"`
+		BasePath          string            `json:"base_path"`
+		Source            string            `json:"source"`
+		Sync              *syncStatus       `json:"sync,omitempty"`
+		Signing           bool              `json:"signing"`
+		LoadedAt          time.Time         `json:"loaded_at"`
+		Reloads           uint64            `json:"reloads"`
+		LastError         string            `json:"last_error"`
+		Errors            []string          `json:"errors"`
+		Resident          uint64            `json:"resident_bytes"`
+		Bundles           []bundleStatus    `json:"bundles"`
+		Rules             []domain.Rule     `json:"rules"`
+		Backend           domain.Mapping    `json:"backend"`
+		Decisions         map[string]uint64 `json:"decisions"`
+		DecisionsByBundle map[string]uint64 `json:"decisions_by_bundle"`
+		Issues            []string          `json:"issues"`
 	}{
-		Version: build, StartedAt: started, Project: snap.Config.Project, Environment: snap.Config.Environment,
-		Setup: snap.Setup, Auth: snap.Config.Auth.Hash != "", Default: snap.Default.Version, DefaultFrom: snap.DefaultFrom,
-		BasePath: snap.BasePath, Source: snap.Config.Source.String(), Signing: snap.Signed, LoadedAt: snap.LoadedAt,
-		Reloads: reloads, LastError: lastErr, Errors: snap.Errors, Resident: resident(),
-		Rules: snap.Config.Rules, Backend: snap.Config.Backend, Decisions: decisions, Issues: snap.Issues,
+		Version:           build,
+		StartedAt:         started,
+		Project:           snap.Config.Project,
+		Environment:       snap.Config.Environment,
+		Setup:             snap.Setup != "",
+		Auth:              snap.Config.Auth.Hash != "",
+		Default:           snap.Default.Version,
+		DefaultFrom:       snap.DefaultFrom,
+		BasePath:          snap.BasePath,
+		Source:            snap.Config.Source.String(),
+		Signing:           snap.Signed,
+		LoadedAt:          snap.LoadedAt,
+		Reloads:           reloads,
+		LastError:         lastErr,
+		Errors:            snap.Errors,
+		Resident:          resident(),
+		Rules:             snap.Config.Rules,
+		Backend:           snap.Config.Backend,
+		Decisions:         byVia,
+		DecisionsByBundle: byBundle,
+		Issues:            snap.Issues,
 	}
-	if at, n, syncErr := rt.cat.SyncState(); !at.IsZero() {
-		out.Sync = &syncStatus{at, n, syncErr}
+	if at, objects, syncErr := rt.cat.SyncState(); !at.IsZero() {
+		out.Sync = &syncStatus{At: at, Objects: objects, Error: syncErr}
 	}
 	for _, b := range snap.Bundles() {
-		out.Bundles = append(out.Bundles, bundleStatus{b.Version, b.Len(), b.Bytes(), b.ZipBytes, b.ModTime})
+		out.Bundles = append(out.Bundles, bundleStatus{
+			Version:  b.Version,
+			Files:    b.Len(),
+			Bytes:    b.Bytes(),
+			ZipBytes: b.ZipBytes,
+			ModTime:  b.ModTime,
+			Native:   b.Native,
+			Blocked:  snap.Bundle(b.Version) == nil,
+		})
 	}
 	writeJSON(w, http.StatusOK, out)
 }

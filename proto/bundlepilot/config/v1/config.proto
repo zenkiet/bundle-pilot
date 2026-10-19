@@ -23,6 +23,29 @@ message Config {
   string project_name = 8;
   // Label next to the name, e.g. production.
   string environment = 9;
+  // Bundles never served: set through /__gateway/blocked, kept by every config save.
+  repeated string blocked = 10;
+  // API tokens: set through /__gateway/tokens, kept by every config save.
+  repeated Token tokens = 11;
+}
+
+// Token lets a script call the admin API with "Authorization: Bearer <secret>".
+message Token {
+  string name = 1;
+  // read (status, config, history), upload (also adds bundles) or admin (everything).
+  string scope = 2;
+  // SHA-256 of the secret, hex: the secret is shown once, when the token is made.
+  string sha256 = 3;
+  // RFC 3339.
+  string created = 4;
+}
+
+// Revision is one saved config in DIST/history, as clients see it: secrets masked.
+message Revision {
+  // Who saved it: the admin's username, token:<name>, setup or cli.
+  string by = 1;
+  // The Config, encoded.
+  bytes config = 2;
 }
 
 // Auth protects /__gateway/* except /__gateway/data and /healthz with HTTP Basic auth.

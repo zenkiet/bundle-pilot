@@ -2,11 +2,14 @@ package domain
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -34,10 +37,19 @@ type Config struct {
 	Rules       []Rule
 	Source      Source
 	Auth        Auth
+	Blocked     []string
+	Tokens      []Token
 }
 
-// Source is where versions/*.zip come from; the zero value is the local
-// directory, "s3" is any S3-compatible bucket mirrored into it.
+// Revision is one config as saved, kept in DIST/history.
+type Revision struct {
+	ID string    `json:"id"`
+	At time.Time `json:"at"`
+	By string    `json:"by"`
+}
+
+// Source is where versions/*.zip come from. The zero value is the local directory; "s3" is
+// any S3-compatible bucket, mirrored into that directory.
 type Source struct {
 	Type            string
 	Bucket          string
@@ -56,6 +68,8 @@ func (s Source) String() string {
 	return s.Type + "://" + s.Bucket + "/" + s.Prefix
 }
 
+// Rule sends visitors whose facts match When to Bundle, until Until. NewSnapshot sets Active
+// when the rule is usable: its bundle serves and nothing in it is broken.
 type Rule struct {
 	ID     string         `json:"id"`
 	Note   string         `json:"note,omitempty"`
@@ -64,23 +78,28 @@ type Rule struct {
 	Until  time.Time      `json:"until,omitzero"`
 	Active bool           `json:"active"`
 	conds  []cond
-	key    string
+	key    string // When in canonical form, to spot two rules with the same conditions
 }
 
+// cond is one fact of a rule's When. A value matches when it is one of exact, falls in the
+// first pct percent of users, or satisfies every bound of one entry in cmps.
 type cond struct {
-	fact  string
-	l     version.Layout
-	pct   int
-	exact map[string]struct{}
-	cmps  [][]bound
+	fact   string
+	layout version.Layout
+	pct    int
+	exact  map[string]struct{}
+	cmps   [][]bound
+	lossy  bool // a number >= 2^53: protobuf Struct stores numbers as float64, so its last digits were lost
 }
 
+// bound is one comparison, such as ">=2.0.0"; kind says whether val is a version or a date.
 type bound struct {
 	op   string
 	val  string
 	kind version.Kind
 }
 
+// Facts are what the app posts about a visitor, keyed by lower-case name.
 type Facts map[string]string
 
 // DecodeConfig reads config.pb, or its JSON form, which rejects unknown fields.
@@ -92,15 +111,17 @@ func DecodeConfig(data []byte, asJSON bool) (*configv1.Config, error) {
 	return pb, proto.Unmarshal(data, pb)
 }
 
+// EncodeConfig writes config.pb. The output is deterministic, so equal configs get equal ETags.
 func EncodeConfig(pb *configv1.Config) ([]byte, error) {
 	return proto.MarshalOptions{Deterministic: true}.Marshal(pb)
 }
 
+// ParseConfig validates config.pb and turns it into a Config. It leaves pb unchanged.
 func ParseConfig(pb *configv1.Config) (Config, error) {
-	l := version.Default
+	layout := version.Default
 	if pb.DateFormat != "" {
 		var err error
-		if l, err = version.ParseLayout(pb.DateFormat); err != nil {
+		if layout, err = version.ParseLayout(pb.DateFormat); err != nil {
 			return Config{}, fmt.Errorf("dateFormat %q: %w", pb.DateFormat, err)
 		}
 	}
@@ -108,22 +129,44 @@ func ParseConfig(pb *configv1.Config) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	c := Config{Project: strings.TrimSpace(pb.ProjectName), Environment: strings.TrimSpace(pb.Environment), Default: strings.TrimSpace(pb.DefaultBundle), Dates: l, Backend: NewMapping(l, pb.Backend), Source: src}
+	c := Config{
+		Project:     strings.TrimSpace(pb.ProjectName),
+		Environment: strings.TrimSpace(pb.Environment),
+		Default:     strings.TrimSpace(pb.DefaultBundle),
+		Dates:       layout,
+		Backend:     NewMapping(layout, pb.Backend),
+		Source:      src,
+	}
 	if c.Auth, err = parseAuth(pb.Auth); err != nil {
 		return Config{}, err
 	}
-	kind, err := c.Backend.kind(l)
+	if c.Tokens, err = parseTokens(pb.Tokens); err != nil {
+		return Config{}, err
+	}
+	for _, v := range pb.Blocked {
+		v = strings.TrimSpace(v)
+		switch {
+		case v == "" || slices.Contains(c.Blocked, v):
+			return Config{}, fmt.Errorf("blocked %q: empty or listed twice", v)
+		case v == c.Default:
+			return Config{}, fmt.Errorf("default %s is blocked: unblock it, or set another default", v)
+		}
+		c.Blocked = append(c.Blocked, v)
+	}
+	backendKind, err := c.Backend.kind(layout)
 	if err != nil {
 		return Config{}, err
 	}
 	ids := map[string]bool{}
 	for i, rf := range pb.Rules {
-		r, err := parseRule(i, rf, l)
+		r, err := parseRule(i, rf, layout)
 		if err == nil && ids[r.ID] {
 			err = errors.New("duplicate id")
 		}
+		// when.backend must compare the same shape, date or version, as the backend keys.
 		for _, cd := range r.conds {
-			if cd.fact == "backend" && kind != version.Invalid && len(cd.cmps) > 0 && cd.cmps[0][0].kind != kind {
+			compares := cd.fact == "backend" && len(cd.cmps) > 0
+			if compares && backendKind != version.Invalid && cd.cmps[0][0].kind != backendKind {
 				err = errors.New("when.backend compares a different shape than the backend keys")
 			}
 		}
@@ -136,8 +179,8 @@ func ParseConfig(pb *configv1.Config) (Config, error) {
 	return c, nil
 }
 
-// ParseFacts reads the flat JSON object the frontend posts; names are
-// case-insensitive, numbers keep their literal text and null means absent.
+// ParseFacts reads the JSON object the app posts. Names are case-insensitive, numbers keep
+// their exact text, and null means the fact is absent.
 func ParseFacts(data []byte) (Facts, error) {
 	var raw map[string]jsontext.Value
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -168,6 +211,37 @@ func ParseFacts(data []byte) (Facts, error) {
 	return f, nil
 }
 
+// lossy reports whether a number in When was too large to keep all its digits.
+func (r *Rule) lossy() bool {
+	return slices.ContainsFunc(r.conds, func(c cond) bool { return c.lossy })
+}
+
+func (r *Rule) expired(now time.Time) bool {
+	return !r.Until.IsZero() && !now.Before(r.Until)
+}
+
+// skipped explains, for Explain, why Decide passed r over. runs is whether r's bundle can serve
+// this visitor.
+func (r *Rule) skipped(f Facts, now time.Time, runs bool) string {
+	switch {
+	case !r.Active:
+		return "inactive, see the issues"
+	case r.expired(now):
+		return "expired"
+	}
+	for _, c := range r.conds {
+		if v, ok := f[c.fact]; !ok {
+			return "no " + c.fact + " fact"
+		} else if !c.match(v) {
+			return c.fact + " " + strconv.Quote(v) + " does not match"
+		}
+	}
+	if !runs {
+		return "bundle " + r.Bundle + " needs a newer native app"
+	}
+	return "matches"
+}
+
 func (r *Rule) match(f Facts) bool {
 	for _, c := range r.conds {
 		v, ok := f[c.fact]
@@ -188,9 +262,9 @@ func (c *cond) match(v string) bool {
 	if len(c.cmps) == 0 {
 		return false
 	}
-	kind := c.l.Kind(v)
-	for _, all := range c.cmps {
-		if all[0].kind == kind && !slices.ContainsFunc(all, func(b bound) bool { return !b.holds(c.l, v) }) {
+	kind := c.layout.Kind(v)
+	for _, bounds := range c.cmps {
+		if bounds[0].kind == kind && allHold(bounds, c.layout, v) {
 			return true
 		}
 	}
@@ -204,20 +278,29 @@ func bucket(v string) int {
 	return int(h.Sum32() % 100)
 }
 
-func (b bound) holds(l version.Layout, v string) bool {
-	c := l.Compare(v, b.val)
-	switch b.op {
-	case "<":
-		return c < 0
-	case "<=":
-		return c <= 0
-	case ">":
-		return c > 0
+func allHold(bounds []bound, layout version.Layout, v string) bool {
+	for _, b := range bounds {
+		if !b.holds(layout, v) {
+			return false
+		}
 	}
-	return c >= 0
+	return true
 }
 
-func parseRule(i int, rf *configv1.Rule, l version.Layout) (Rule, error) {
+func (b bound) holds(layout version.Layout, v string) bool {
+	order := layout.Compare(v, b.val)
+	switch b.op {
+	case "<":
+		return order < 0
+	case "<=":
+		return order <= 0
+	case ">":
+		return order > 0
+	}
+	return order >= 0
+}
+
+func parseRule(i int, rf *configv1.Rule, layout version.Layout) (Rule, error) {
 	r := Rule{ID: strings.TrimSpace(rf.Id), Note: strings.TrimSpace(rf.Note), Bundle: strings.TrimSpace(rf.Bundle)}
 	switch {
 	case r.ID == "":
@@ -258,7 +341,7 @@ func parseRule(i int, rf *configv1.Rule, l version.Layout) (Rule, error) {
 			return r, fmt.Errorf("facts %q and %q differ only by case", other, name)
 		}
 		names[key] = name
-		c, err := parseCond(key, v, l)
+		c, err := parseCond(key, v, layout)
 		if err != nil {
 			return r, fmt.Errorf("when.%s: %w", name, err)
 		}
@@ -271,22 +354,66 @@ func parseRule(i int, rf *configv1.Rule, l version.Layout) (Rule, error) {
 	return r, nil
 }
 
-// parseAuth hashes a plaintext password into pb, so what gets stored never holds it.
+// masked stands in for a stored secret in configs sent to clients.
+const masked = "***"
+
+// Redacted is pb as clients see it. Secrets are masked. Blocked bundles and tokens are left
+// out: they have endpoints of their own, so they never change the ETag or add to history.
+func Redacted(pb *configv1.Config) *configv1.Config {
+	out := proto.CloneOf(pb)
+	out.Blocked, out.Tokens = nil, nil
+	if out.GetSource().GetSecretAccessKey() != "" {
+		out.Source.SecretAccessKey = masked
+	}
+	if out.GetAuth().GetPasswordHash() != "" {
+		out.Auth.PasswordHash = masked
+	}
+	return out
+}
+
+// ETag hashes Redacted(pb), so an If-Match fails only on changes the client could have seen.
+func ETag(pb *configv1.Config) string {
+	b, _ := EncodeConfig(Redacted(pb))
+	sum := sha256.Sum256(b)
+	return `"` + hex.EncodeToString(sum[:8]) + `"`
+}
+
+// KeepStored copies from cur what a client cannot send back: masked secrets, blocked bundles,
+// tokens, and the admin account when pb has no auth at all (an empty "auth": {} removes it).
+func KeepStored(pb, cur *configv1.Config) {
+	pb.Blocked, pb.Tokens = cur.GetBlocked(), cur.GetTokens()
+	if pb.GetSource().GetSecretAccessKey() == masked {
+		pb.Source.SecretAccessKey = cur.GetSource().GetSecretAccessKey()
+	}
+	switch {
+	case pb.Auth == nil:
+		pb.Auth = cur.GetAuth()
+	case pb.Auth.PasswordHash == masked:
+		pb.Auth.PasswordHash = cur.GetAuth().GetPasswordHash()
+	}
+}
+
+// HashAuth replaces a new admin password with its hash. Call it just before writing: PBKDF2 is
+// slow on purpose, so validation skips it.
+func HashAuth(pb *configv1.Config) {
+	if a := pb.GetAuth(); a.GetPassword() != "" {
+		a.PasswordHash, a.Password = HashPassword(a.Password), ""
+	}
+}
+
 func parseAuth(f *configv1.Auth) (Auth, error) {
 	if f == nil {
 		return Auth{}, nil
 	}
-	f.Username = strings.TrimSpace(f.Username)
-	if f.Password != "" {
-		if len(f.Password) < 8 {
-			return Auth{}, errors.New("auth.password: at least 8 characters")
-		}
-		f.PasswordHash, f.Password = HashPassword(f.Password), ""
+	user := strings.TrimSpace(f.Username)
+	if f.Password != "" && len(f.Password) < 8 {
+		return Auth{}, errors.New("auth.password: at least 8 characters")
 	}
-	if (f.Username == "") != (f.PasswordHash == "") {
+	hasPassword := f.Password != "" || f.PasswordHash != ""
+	if (user != "") != hasPassword {
 		return Auth{}, errors.New("auth: username and password go together")
 	}
-	return Auth{Username: f.Username, Hash: f.PasswordHash}, nil
+	return Auth{Username: user, Hash: f.PasswordHash}, nil
 }
 
 func parseSource(f *configv1.Source) (Source, error) {
@@ -303,12 +430,21 @@ func parseSource(f *configv1.Source) (Source, error) {
 	default:
 		return Source{}, fmt.Errorf("source.type %q: want local or s3", f.Type)
 	}
-	s := Source{Type: "s3", Bucket: strings.TrimSpace(f.Bucket), Prefix: strings.Trim(f.Prefix, "/ "), Endpoint: strings.TrimRight(strings.TrimSpace(f.Endpoint), "/"),
-		Region: strings.TrimSpace(f.Region), AccessKeyID: strings.TrimSpace(f.AccessKeyId), SecretAccessKey: strings.TrimSpace(f.SecretAccessKey), Poll: 30 * time.Second}
-	for _, req := range [...][2]string{{"bucket", s.Bucket}, {"region", s.Region}} {
-		if req[1] == "" {
-			return s, fmt.Errorf("source.%s is required", req[0])
-		}
+	s := Source{
+		Type:            "s3",
+		Bucket:          strings.TrimSpace(f.Bucket),
+		Prefix:          strings.Trim(f.Prefix, "/ "),
+		Endpoint:        strings.TrimRight(strings.TrimSpace(f.Endpoint), "/"),
+		Region:          strings.TrimSpace(f.Region),
+		AccessKeyID:     strings.TrimSpace(f.AccessKeyId),
+		SecretAccessKey: strings.TrimSpace(f.SecretAccessKey),
+		Poll:            30 * time.Second,
+	}
+	if s.Bucket == "" {
+		return s, errors.New("source.bucket is required")
+	}
+	if s.Region == "" {
+		return s, errors.New("source.region is required")
 	}
 	if (s.AccessKeyID == "") != (s.SecretAccessKey == "") {
 		return s, errors.New("source: accessKeyId and secretAccessKey go together; leave both out for the AWS credential chain")
@@ -329,7 +465,7 @@ func parseSource(f *configv1.Source) (Source, error) {
 	return s, nil
 }
 
-// parseUntil reads a day, active through its end in UTC, or an exact RFC 3339 instant.
+// parseUntil reads a date, meaning until that day ends in UTC, or an exact RFC 3339 time.
 func parseUntil(s string) (time.Time, error) {
 	if t, err := time.Parse(time.DateOnly, s); err == nil {
 		return t.AddDate(0, 0, 1), nil
@@ -337,8 +473,10 @@ func parseUntil(s string) (time.Time, error) {
 	return time.Parse(time.RFC3339, s)
 }
 
-func parseCond(fact string, v jsontext.Value, l version.Layout) (cond, error) {
-	c := cond{fact: fact, l: l, exact: map[string]struct{}{}}
+// parseCond reads one fact of When: a value or a list of values, each exact ("4.80.0"), a
+// percentage ("10%", "*" for all) or comparisons (">=2.0.0 <3.0.0").
+func parseCond(fact string, v jsontext.Value, layout version.Layout) (cond, error) {
+	c := cond{fact: fact, layout: layout, exact: map[string]struct{}{}}
 	items := []jsontext.Value{v}
 	if v.Kind() == '[' {
 		if err := json.Unmarshal(v, &items); err != nil {
@@ -364,7 +502,7 @@ func parseCond(fact string, v jsontext.Value, l version.Layout) (cond, error) {
 			}
 			c.pct = n
 		case s[0] == '<' || s[0] == '>':
-			bounds, err := parseBounds(s, l)
+			bounds, err := parseBounds(s, layout)
 			if err != nil {
 				return c, err
 			}
@@ -372,13 +510,18 @@ func parseCond(fact string, v jsontext.Value, l version.Layout) (cond, error) {
 		default:
 			c.exact[s] = struct{}{}
 		}
+		if it.Kind() == '0' {
+			if n, err := strconv.ParseFloat(s, 64); err == nil && math.Abs(n) >= 1<<53 {
+				c.lossy = true
+			}
+		}
 	}
 	return c, nil
 }
 
-// parseBounds reads space-separated comparisons that must all hold, such as
-// ">=2.0.0 <3.0.0"; the operand decides whether versions or dates are compared.
-func parseBounds(s string, l version.Layout) ([]bound, error) {
+// parseBounds reads comparisons separated by spaces, such as ">=2.0.0 <3.0.0", which must all
+// hold. The values decide whether versions or dates are compared.
+func parseBounds(s string, layout version.Layout) ([]bound, error) {
 	var out []bound
 	toks := strings.Fields(s)
 	for i := 0; i < len(toks); i++ {
@@ -393,14 +536,14 @@ func parseBounds(s string, l version.Layout) ([]bound, error) {
 			return nil, fmt.Errorf("%q: every part must start with <, <=, > or >=", s)
 		}
 		val := toks[i][len(op):]
-		if val == "" && i+1 < len(toks) {
+		if val == "" && i+1 < len(toks) { // ">= 2.0.0", with a space after the operator
 			i++
 			val = toks[i]
 		}
-		kind := l.Kind(val)
+		kind := layout.Kind(val)
 		switch {
 		case kind == version.Invalid:
-			return nil, fmt.Errorf("%q: %q is neither a version nor a date like %s", s, val, l)
+			return nil, fmt.Errorf("%q: %q is neither a version nor a date like %s", s, val, layout)
 		case len(out) > 0 && out[0].kind != kind:
 			return nil, fmt.Errorf("%q mixes dates and versions", s)
 		}
@@ -409,6 +552,7 @@ func parseBounds(s string, l version.Layout) ([]bound, error) {
 	return out, nil
 }
 
+// scalar returns a JSON string, number or boolean as text, and null as "".
 func scalar(v jsontext.Value) (string, error) {
 	switch v.Kind() {
 	case '"':
@@ -427,8 +571,9 @@ func scalar(v jsontext.Value) (string, error) {
 	return "", errors.New("want a string, number or boolean")
 }
 
+const nameChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
+
+// validName allows 1-64 of A-Z a-z 0-9 . _ -
 func validName(s string) bool {
-	return s != "" && len(s) <= 64 && !strings.ContainsFunc(s, func(c rune) bool {
-		return (c < '0' || c > '9') && (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') && c != '.' && c != '_' && c != '-'
-	})
+	return s != "" && len(s) <= 64 && strings.Trim(s, nameChars) == ""
 }

@@ -57,7 +57,8 @@ func (z *inflater) Read(p []byte) (int, error) {
 	}
 	if z.at < z.pos {
 		n, err := io.CopyN(io.Discard, z.r, z.pos-z.at)
-		if z.at += n; err != nil {
+		z.at += n
+		if err != nil {
 			return 0, short(err)
 		}
 	}
@@ -83,12 +84,15 @@ const frameLen = 18 // gzip header and trailer
 
 var gzipHeader = []byte{0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0xff}
 
-// frame is a deflate span between a gzip header and a CRC-32/size trailer: gzip, not recompressed.
+// frame turns a deflate span into gzip without compressing again: a gzip header, the span,
+// then a trailer with its CRC-32 and size.
 func frame(ra io.ReaderAt, s Span) io.ReadSeekCloser {
-	tail := binary.LittleEndian.AppendUint32(binary.LittleEndian.AppendUint32(nil, s.CRC), uint32(s.Size))
+	tail := binary.LittleEndian.AppendUint32(nil, s.CRC)
+	tail = binary.LittleEndian.AppendUint32(tail, uint32(s.Size))
 	return nopCloser{io.NewSectionReader(frameAt{exact{ra}, s, tail}, 0, s.Raw+frameLen)}
 }
 
+// frameAt reads the gzip framing of a span: header, then the span from the zip, then the trailer.
 type frameAt struct {
 	ra   io.ReaderAt
 	s    Span
@@ -99,11 +103,13 @@ type frameAt struct {
 func (f frameAt) ReadAt(p []byte, off int64) (n int, err error) {
 	for len(p) > 0 {
 		var m int
-		switch body := off - int64(len(gzipHeader)); {
+		body := off - int64(len(gzipHeader)) // the offset within the span
+		switch {
 		case body < 0:
 			m = copy(p, gzipHeader[off:])
 		case body < f.s.Raw:
-			if m, err = f.ra.ReadAt(p[:min(int64(len(p)), f.s.Raw-body)], f.s.Off+body); err != nil {
+			m, err = f.ra.ReadAt(p[:min(int64(len(p)), f.s.Raw-body)], f.s.Off+body)
+			if err != nil {
 				return n + m, err
 			}
 		case body-f.s.Raw < int64(len(f.tail)):

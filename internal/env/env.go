@@ -1,4 +1,6 @@
-package config
+// Package env reads the gateway's settings from environment variables. Routing rules live in
+// config.pb instead, see domain.Config.
+package env
 
 import (
 	"crypto/ed25519"
@@ -10,12 +12,13 @@ import (
 )
 
 type Config struct {
-	Addr      string
-	Dist      string
-	LogLevel  slog.Level
-	BundleKey ed25519.PublicKey
+	Addr      string            // ":" + PORT, default :8080
+	Dist      string            // DIST, default ./dist
+	LogLevel  slog.Level        // LOG_LEVEL, default info
+	BundleKey ed25519.PublicKey // BUNDLE_PUBKEY; when set, only signed bundles load
 }
 
+// Load reads the settings through getenv, normally os.Getenv.
 func Load(getenv func(string) string) (Config, error) {
 	env := func(key, fallback string) string {
 		if v := strings.TrimSpace(getenv(key)); v != "" {

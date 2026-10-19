@@ -15,13 +15,19 @@ const (
 	minRate   = 16 << 10
 )
 
-// extendDeadline lets slow clients finish a large body; WriteTimeout still bounds the rest.
+// extendDeadline lets slow clients finish sending or receiving a large body; the server
+// timeouts still bound the rest.
 func extendDeadline(w http.ResponseWriter, n int64) {
 	if n > largeBody {
-		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(time.Minute + time.Duration(n/minRate)*time.Second))
+		rc, t := http.NewResponseController(w), time.Now().Add(time.Minute+time.Duration(n/minRate)*time.Second)
+		_ = rc.SetReadDeadline(t)
+		_ = rc.SetWriteDeadline(t)
 	}
 }
 
+// static serves rel from the bundle picked for this visitor. A path the bundle lacks gets the
+// app's index.html, so client-side routes work, unless it names a file (it has an extension)
+// and the browser is not asking for a page.
 func (rt *Router) static(w http.ResponseWriter, r *http.Request, snap *domain.Snapshot, rel string) {
 	query, cookie := r.URL.Query().Get(cookieName), cookieValue(r, cookieName)
 	b, cur := snap.Pick(query, cookie)
@@ -33,6 +39,7 @@ func (rt *Router) static(w http.ResponseWriter, r *http.Request, snap *domain.Sn
 		}
 		a, owner = b.Index(), b
 	}
+	// Decide the page from the facts cookie the SDK keeps, so the first load needs no /data call.
 	if a == b.Index() && query == "" {
 		if f := cookieFacts(r); f != nil {
 			if d, via, err := snap.Decide(f, time.Now()); err == nil {
@@ -41,7 +48,10 @@ func (rt *Router) static(w http.ResponseWriter, r *http.Request, snap *domain.Sn
 			}
 		}
 	}
-	if query == b.Version && query != cookie && !a.Immutable() && r.Header.Get("Sec-Fetch-Site") != "cross-site" {
+	// ?bundle=<version> on a page pins that bundle in the cookie; a link from another site cannot.
+	asked := query == b.Version && query != cookie
+	crossSite := r.Header.Get("Sec-Fetch-Site") == "cross-site"
+	if asked && !a.Immutable() && !crossSite {
 		setBundle(w, r, b.Version, cookieAge, cur.Version != b.Version)
 	}
 	extendDeadline(w, a.Size())

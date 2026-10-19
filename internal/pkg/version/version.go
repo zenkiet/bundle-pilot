@@ -19,12 +19,14 @@ func (l Layout) Compare(a, b string) int {
 		}
 	}
 	ca, cb := canon(a), canon(b)
-	if c := semver.Compare(ca, cb); c != 0 || semver.IsValid(ca) {
-		return c
+	// semver sorts invalid versions first and calls any two of them equal: order those by text.
+	if !semver.IsValid(ca) && !semver.IsValid(cb) {
+		return strings.Compare(a, b)
 	}
-	return strings.Compare(a, b)
+	return semver.Compare(ca, cb)
 }
 
+// Kind is the shape of a value: a date in the layout, a dotted (semantic) version, or neither.
 type Kind uint8
 
 const (
@@ -63,18 +65,22 @@ type Layout struct {
 	layout string
 }
 
+// part is one element of a date format.
 type part struct {
-	std  string
-	unit int
+	std  string // its time.Parse layout, such as "2006"
+	unit int    // 0 year, 1 month, 2 day
 }
 
+// Default is the date format used when config.pb sets none.
 var Default, _ = ParseLayout("MM.dd.YYYY")
 
+// ParseLayout reads a date format such as MM.dd.YYYY.
 func ParseLayout(s string) (Layout, error) {
 	l := Layout{name: s}
 	var seen [3]bool
 	prev := ""
 	for i := 0; i < len(s); {
+		// tok is a run of one repeated character, such as YYYY or "."
 		n := 1
 		for i+n < len(s) && s[i+n] == s[i] {
 			n++
@@ -120,8 +126,8 @@ func (l Layout) Date(s string) int {
 	return d
 }
 
-// date also reports whether s has the layout's shape even if the day does not
-// exist: time.Parse then fails with a range message instead of on an element.
+// date is Date, plus whether s has the layout's shape even when the day does not exist,
+// such as 02.30.2026: time.Parse then fails with a range message, not on an element.
 func (l Layout) date(s string) (int, bool) {
 	if l.layout == "" {
 		return 0, false

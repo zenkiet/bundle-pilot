@@ -36,21 +36,25 @@ type variant struct {
 	enc  []string
 }
 
+// Asset is one file ready to serve: its encodings, content type and cache policy.
 type Asset struct {
-	v         [3]variant
+	v         [3]variant // by encoding; a variant with no open func is not available
 	body      []byte
 	ctype     []string
 	cache     []string
 	immutable bool
+	noRange   bool
 }
 
-// FromZip serves a file in place from the open zip ra: sum is its SHA-256 (the ETag), head its
-// first bytes (the content type), br its precompressed sidecar or nil. A deflate entry also
-// goes out as gzip, its stream framed rather than recompressed.
+// FromZip serves a file in place from the open zip ra. sum is its SHA-256 (for the ETag), head
+// its first bytes (to sniff the content type), and br its precompressed .br sidecar, or nil. A
+// deflated entry can also go out as gzip: its deflate stream gets a gzip header and trailer
+// instead of being compressed again.
 func FromZip(name string, ra io.ReaderAt, f Span, sum [32]byte, head []byte, br *Span) *Asset {
 	a := newAsset(name, head)
 	tag := `"` + hex.EncodeToString(sum[:8])
 	a.set(identity, tag, f.Size, func() io.ReadSeekCloser { return f.Open(ra) })
+	a.noRange = f.Deflate && f.Size > 1<<20 // a range would inflate everything before it
 	best := f.Size
 	if f.Framable && f.Raw+frameLen < best {
 		best = f.Raw + frameLen
@@ -112,6 +116,9 @@ func contentType(name string, head []byte) string {
 	return http.DetectContentType(head)
 }
 
+// hashed reports whether name carries a content hash, so it can be cached for good: anything
+// under /immutable/, or a name ending in a hash token, such as main-ABCD1234.js. A token is
+// 8 characters of upper-case letters, or of letters mixed with digits, or 16+ hex digits.
 func hashed(name string) bool {
 	if strings.Contains(name, "/immutable/") {
 		return true
@@ -148,7 +155,7 @@ func hashed(name string) bool {
 	case len(tok) >= 16:
 		return hexOnly
 	case len(tok) == 8:
-		return upper && !lower || digit && (upper || lower)
+		return (upper && !lower) || (digit && (upper || lower))
 	}
 	return false
 }

@@ -7,11 +7,11 @@ import (
 )
 
 const (
-	cookieName  = "bundle"
-	revCookie   = "bundle_rev"
-	factsCookie = "bundle_facts"
+	cookieName  = "bundle"       // the pinned bundle version, also the ?bundle= query name
+	revCookie   = "bundle_rev"   // changes on every switch, for ngsw.json
+	factsCookie = "bundle_facts" // the facts the SDK last posted
 	cookieAge   = 365 * 24 * 3600
-	decisionAge = 7 * 24 * 3600
+	decisionAge = 7 * 24 * 3600 // a pin made by a decision other than the default
 )
 
 func cookieValue(r *http.Request, name string) string {
@@ -21,6 +21,8 @@ func cookieValue(r *http.Request, name string) string {
 	return ""
 }
 
+// setBundle pins version v in the cookie; maxAge -1 clears the pin. changed also moves
+// bundle_rev, so the service worker treats the switch as an update.
 func setBundle(w http.ResponseWriter, r *http.Request, v string, maxAge int, changed bool) {
 	setCookie(w, r, cookieName, v, maxAge)
 	if changed {
