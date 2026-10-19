@@ -15,6 +15,7 @@ SvelteKit).
 ```
 dist/
   config.pb           default bundle, selection rules, backend table (protobuf, see below)
+  history/            every saved config, newest 100, secrets masked (see History)
   versions/
     4.78.0.zip        one zip per bundle, index.html at the root of the zip
     4.79.0.zip          index.html: <base href> decides the mount path
@@ -23,24 +24,32 @@ dist/
 
 One zip is one version and the gateway serves it in place: a deflated entry
 goes out as `gzip` with its stream framed, a stored `x.br` next to `x` as
-`br`, and anything else is inflated on demand. At load every entry is read
+`br`, and anything else is inflated on demand. Byte ranges work on stored
+entries and on deflated ones up to 1 MiB; a larger deflated entry goes out
+whole, since a range would inflate everything before it, so store media that
+needs ranges (`zip -0`). At load every entry is read
 once to check its CRC and size and take the SHA-256 behind its ETag; only
 `index.html` (stamped with the version) and `ngsw.json` are kept in memory.
 A zip stays open while a snapshot uses it, so **replace zips only by rename**:
 a write in place makes the gateway drop that version at the next check rather
-than serve shifted bytes. Directory and dot entries inside the zip are
+than serve shifted or unchecked bytes. It notices even when the mtime is put
+back, from the inode's change time (Linux and macOS; not on Windows). Directory and dot entries inside the zip are
 ignored, and so is anything in `versions/` that is not a `.zip`.
 
 Deploy a new version as `dist/versions/.tmp-<v>.zip` then `mv` it to
 `dist/versions/<v>.zip`: dot files are ignored and the rename is atomic. The
-gateway checks every 5 seconds and reloads only the zips whose size or mtime
-changed; a bundle that fails to load (read error, or replaced while being
-read) is retried with a backoff up to a minute, and its previous load keeps
-serving meanwhile. `config.pb` is written atomically by the admin UI and by
+gateway checks every 5 seconds and reloads only the zips whose size, mtime or
+change time moved; a bundle that fails to load (read error, or replaced while
+being read) is retried with a backoff up to a minute, and its previous load
+keeps serving meanwhile, once its open file checks out again (CRCs and
+signature). `config.pb` is written atomically by the admin UI and by
 `gateway import`. With no bundle yet the gateway still starts: app routes and
 `POST /__gateway/data` answer 503 until one is uploaded, while `/healthz` and
-the admin API work. Zips that vanish from a running gateway keep serving from
-their open files.
+the admin API work. A zip that vanishes from a running gateway, deleted on disk
+or in the bucket, keeps serving from its open file while it is the config's
+`default`, or while no zip is left at all, with an error in
+`/__gateway/status`; any other vanished zip stops serving, and a restart
+serves what is on disk.
 
 The gateway compresses nothing itself: brotli comes from the build. Write
 `x.br` next to every text file, store those entries and deflate the rest; a
@@ -91,8 +100,16 @@ the frontend sends:
    not on disk keeps the bundle already serving as default (the newest on a
    fresh start).
 
+A bundle that is blocked, not on disk, or needs a newer app than a posted
+`native` fact (see Over-the-air updates) is passed over: its rules are skipped,
+a backend step hands its backends to the closest older step that serves
+(with none, the request is refused), and the default gives way to the closest
+older bundle the app runs (`via: native`).
+
 `when` values: a string, number or boolean matches exactly (numbers by their
-literal text, so `2020210` equals `"2020210"`); a list matches any element;
+literal text, so `2020210` equals `"2020210"`; write ids of 2^53 or more as
+strings, since `config.pb` keeps numbers as doubles, and a rule holding such a
+number is inactive with an issue); a list matches any element;
 `<`, `<=`, `>`, `>=` compare against a version or a date, and
 space-separated parts must all hold (`">=2.0.0 <3.0.0"`); `"*"` matches any
 present value; `"10%"` matches a stable 10% of the values (hashed, so raising
@@ -120,15 +137,41 @@ An import or a `PUT` rejects unknown keys (`"bundel"`), duplicate keys and
 trailing commas with a line and column, and invalid rules by name; a
 `config.pb` that fails validation, cannot be read or goes missing is reported
 in `/__gateway/status` and the previous config keeps serving; before any
-config loaded, a broken one stops the gateway at startup. A rule whose bundle
-is not on disk is inactive until that bundle is deployed. Logs and
-`/__gateway/status` also warn about a backend table that gets older as the
+config loaded, a broken one stops the gateway at startup. While `config.pb`
+cannot be read, saves are refused rather than written over it, which would
+drop the admin account: put the file back, or remove it and restart to run
+setup, then restore the rules from History. Logs and `/__gateway/status` also
+warn about a backend table that gets older as the
 backend gets newer, dates far in the future, and rules that repeat an
 earlier rule's conditions.
 
 Facts are claimed by the browser, so rules route users, they do not grant
 access: anyone can send `storeID` 2020210, just as anyone can use
 `?bundle=`. Never rely on a bundle to hide features or data.
+
+`blocked` and `tokens` are kept in `config.pb` but managed through their own
+endpoints: `GET /__gateway/config` leaves them out, and a `PUT`,
+`gateway import` or a restore from History never changes them.
+
+### Blocking a bundle
+
+`PUT /__gateway/blocked/<version>` stops serving a bundle at once, without
+deleting it: rules that point at it pause, backend steps pass its backends to
+the closest older step, cookies and `?bundle=` naming it are ignored, and
+`GET /__gateway/bundles/<version>…` answers 404, so over-the-air updaters
+cannot install it. Pages already open on it still load its hashed files:
+blocking stops routing, not content, so delete a bundle that must disappear.
+`DELETE` lifts the block. The default cannot be blocked (409): set another one
+first. Bundles → Block now in the admin UI does the same.
+
+### History
+
+Every save that changes what `GET /__gateway/config` shows is kept in
+`dist/history/` (the newest 100, mode 0600), with who saved it and the secrets
+masked; the first save also keeps the config from before it. A save that only
+changes a password, a token or a block adds nothing. The admin UI's History
+page shows what restoring one would change and restores it with Save, keeping
+the live admin account, secrets, tokens and blocked bundles.
 
 ### Admin auth and first run
 
@@ -142,19 +185,44 @@ API with HTTP Basic auth:
 
 `password` is write-only: the gateway hashes it (PBKDF2-SHA256, 600 000
 rounds, random salt) and stores only `password_hash` in `config.pb`. Reads
-return the hash masked as `***`, and a `PUT` that sends `***` back keeps it;
-send a new `password` to rotate. Without `auth`, or when the gateway starts
-without `config.pb`, the admin API is open and `/__gateway/status` reports
-`setup_required` and `auth`. The admin UI opens a first-run wizard at
-`/__gateway/ui/setup/` on such a start (project, admin account,
-bundle source, default bundle) and signs the browser in as soon as it saves;
-later visits ask for the password at `/__gateway/ui/login/`.
+return the hash masked as `***`. A `PUT` or `gateway import` that sends `***`
+back, or leaves `auth` out, keeps the stored account; send a new `password` to
+rotate it, or `"auth": {}` to remove it. A config without an account leaves the
+admin API open, and `/__gateway/status` lists that as an issue. At most two
+password checks run at once (more get 429), and failed sign-ins are logged.
+After 5 wrong passwords in a row an address waits before its next try is even
+checked, 1 s doubling up to 15 minutes (429 with `Retry-After`); a browser
+already signed in is never held back. Behind a proxy on a private network, such
+as Traefik in Docker, the address is the last `X-Forwarded-For` entry. Rootless
+Docker or a userland proxy leaves that header to the client, and behind
+Cloudflare many users share an edge address.
 
-Auth covers `/__gateway/status`, `config`, uploads and deletes under `bundles`,
-and `reload`. The bundle routes, `GET /__gateway/bundles/*` (for over-the-air
-clients), `POST /__gateway/data`, `/healthz` and the UI assets stay open, and
-credentials travel in clear over plain HTTP, so terminate TLS in front of the
-admin paths.
+API tokens let CI and scripts call the admin API with
+`Authorization: Bearer <token>` instead of the password. Create one in
+Settings → API tokens, or with `POST /__gateway/tokens`
+`{"name": "ci", "scope": "upload"}`: the answer carries the token this once,
+and only its SHA-256 is stored. Scopes: `read` (status, config, history,
+decision tester), `upload` (also adds new versions; replacing one takes
+`admin`), `admin` (everything). `DELETE /__gateway/tokens/<name>` revokes one
+at once. Tokens wait for an admin password.
+
+Every save, upload, delete, block and token change is logged with who made it
+(`by`: the admin's username, `token:<name>`, `setup`, `cli`, or `anonymous`
+while no password is set) and the client address.
+
+A gateway that starts without `config.pb` is in setup: `/__gateway/status`
+reports `setup_required`, reads stay open, and every write needs the
+`X-Setup-Token` header carrying the token the gateway prints to its log at
+startup (a `PUT /__gateway/config` with `X-Dry-Run` excepted). The admin UI
+opens a first-run wizard at `/__gateway/ui/setup/` (project, admin account with
+that token, bundle source, default bundle) and signs the browser in as soon as
+it saves; later visits ask for the password at `/__gateway/ui/login/`.
+
+Auth covers every `/__gateway/*` route except `GET /__gateway/bundles/*` (for
+over-the-air clients), `POST /__gateway/data` and the UI assets, which stay
+open like `/healthz`. Writes sent by another site's page are refused whatever
+credentials the browser holds. Credentials travel in clear over plain HTTP, so
+terminate TLS in front of the admin paths.
 
 ## Bundle source
 
@@ -226,18 +294,22 @@ connections are closed.
 
 | Path | Behaviour |
 |---|---|
-| `<base href>**` | Bundle chosen by `?bundle=`, then cookie `bundle`, then default. When the request is for `index.html` and the browser carries the `bundle_facts` cookie the SDK writes after each sync, the gateway decides from those facts right there (rules, backend table, default) and sets the `bundle` cookie, so a returning visitor gets the right build on the first byte without a `/data` call. `index.html` also carries a `Link` header preloading its module scripts and stylesheets (at most 12), which a CDN can turn into 103 Early Hints. Hashed files resolve across all bundles so open sessions never 404 after a switch. Navigations (`Accept: text/html`) and paths without an extension fall back to `index.html`. |
-| `POST /__gateway/data` | Body: a flat JSON object of facts (`Content-Type: application/json`, at most 4 KiB and 32 facts), e.g. `{"backend":"07.30.2026","storeID":2020210}`. Returns `{"bundle":"4.80.0","via":"rule:store-2020210"}`, where `via` is `rule:<id>`, `backend:<key>` or `default`. A rule or backend decision sets cookie `bundle` for 7 days (refreshed on every call); a default decision clears it. Cross-origin requests are refused. Send `X-Dry-Run: 1` to see the decision without cookies or counters. |
-| `GET /__gateway/config` | The stored config, JSON by default or protobuf with `Accept: application/x-protobuf`; the S3 secret and the password hash come back masked as `***`. |
-| `PUT /__gateway/config` | Replace the config (`application/json` or `application/x-protobuf`). Validated against the loaded bundles: 422 with `errors` when rejected, else `issues` (warnings) and `saved`; the gateway reloads before answering. `X-Dry-Run: 1` validates without saving. A masked secret or password hash keeps the stored one; `auth.password` is hashed before the file is written. |
-| `/__gateway/ui/` | Admin UI (SvelteKit, embedded): health, default bundle, rules, backend table, bundles with upload and delete, source, decision tester on Overview; a Settings page for what the setup wizard asked (project name, environment, date format, admin account, bundle source, default bundle) plus reload and sign-out; phone, tablet and desktop layouts. First run opens `/setup/`, afterwards `/login/` asks for the admin password, kept in the tab's session storage. Keep `/__gateway/ui/` and the authenticated routes off the public internet at the ingress anyway; `POST /__gateway/data` and `GET /__gateway/bundles/*` must stay reachable for apps. Develop it with `cd frontend && GATEWAY=http://127.0.0.1:8080 pnpm dev`. |
-| `PUT /__gateway/bundles/<version>.zip` | Upload a bundle: the raw zip as the body (at most 256 MiB), named by its version, `4.81.0.zip` or a date in the configured format. Accepted only when it holds `index.html` and, with `BUNDLE_PUBKEY` set, a valid `bundle.sha256.sig`; 400 for a bad name, 413 when too large, 422 otherwise. A zip of the same name is replaced. With an S3 source the zip goes to the bucket first, then into `versions/`. The gateway reloads before answering `{"version","files","replaced","reload_ms"}`. |
-| `GET /__gateway/bundles/<version>.zip` | The zip as uploaded, with ranges and no auth. |
-| `GET /__gateway/bundles/<version>/<path>` | One file of a bundle exactly as zipped (the raw `index.html`, not the stamped page), with ranges and no auth, no cookies and no `index.html` fallback. Over-the-air updaters install from it file by file: fetch `bundle.sha256` and `bundle.sha256.sig`, verify the signature with the publisher's public key, and hand the listed files to the updater (Capgo's `download({ manifest })`), which checks each file's SHA-256 and only downloads what it does not already hold. Call `POST /__gateway/data` natively: WebView requests are cross-origin and refused. |
+| `<base href>**` | Bundle chosen by `?bundle=`, then cookie `bundle`, then default. When the request is for `index.html` and the browser carries the `bundle_facts` cookie the SDK writes whenever the facts change, the gateway decides from those facts right there (rules, backend table, default) and sets the `bundle` cookie, so a returning visitor gets the right build on the first byte without a `/data` call. `index.html` also carries a `Link` header preloading its module scripts and stylesheets (at most 12), which a CDN can turn into 103 Early Hints. Hashed files resolve across all bundles so open sessions never 404 after a switch. Navigations (`Accept: text/html`) and paths without an extension fall back to `index.html`. |
+| `POST /__gateway/data` | Body: a flat JSON object of facts (`Content-Type: application/json`, at most 4 KiB and 32 facts), e.g. `{"backend":"07.30.2026","storeID":2020210}`. Returns `{"bundle":"4.80.0","via":"rule:store-2020210"}`, where `via` is `rule:<id>`, `backend:<key>`, `default` or `native` (see Over-the-air updates). 400 when no bundle fits, counted as `refused` in the status. A rule or backend decision sets cookie `bundle` for 7 days (refreshed on every call); a default decision clears it. Cross-origin requests are refused. Send `X-Dry-Run: 1` to see the decision without cookies or counters. |
+| `GET /__gateway/config` | The stored config, JSON by default or protobuf with `Accept: application/x-protobuf`, with an `ETag`; the S3 secret and the password hash come back masked as `***`, and `blocked` and `tokens` are left out. |
+| `PUT /__gateway/config` | Replace the config (`application/json` or `application/x-protobuf`). Validated against the loaded bundles: 422 with `errors` when rejected, else `issues` (warnings) and `saved`; the gateway reloads before answering. `X-Dry-Run: 1` validates without saving. A masked secret or password hash keeps the stored one; `auth.password` is hashed before the file is written. Send the `ETag` of the config you edited as `If-Match`: a save over a config that changed since answers 412 (without it the save goes through, as from curl), and a save answers its new `ETag`. |
+| `POST /__gateway/decide` | The decision tester: `{"facts": {...}, "config": {...}}` answers `{"bundle", "via", "why", "error"}` as `/data` would under that config (the live one when `config` is left out), with `why` naming the reason each earlier rule passed. No cookie, no counters; `read` scope. |
+| `GET /__gateway/history`, `GET /__gateway/history/<id>` | The saved configs, newest first, as `{"id","at","by"}`; one of them as `GET /__gateway/config` serves it. `read` scope. |
+| `PUT /__gateway/blocked/<version>`, `DELETE …` | Block a loaded bundle, or lift the block: 204, 404 when not loaded, 409 for the default. See Blocking a bundle. |
+| `GET /__gateway/tokens`, `POST /__gateway/tokens`, `DELETE /__gateway/tokens/<name>` | List API tokens (name, scope, created), create one (201 with `{"token"}`, shown once; 409 until an admin password is set) or revoke one. `admin` scope. |
+| `/__gateway/ui/` | Admin UI (SvelteKit, embedded): health, default bundle, rules, backend table, bundles with upload, block and delete, source, decision tester on the draft on Overview; History to diff and restore saved configs; API tokens under Settings; a Settings page for what the setup wizard asked (project name, environment, date format, admin account, bundle source, default bundle) plus reload and sign-out; phone, tablet and desktop layouts. First run opens `/setup/`, afterwards `/login/` asks for the admin password, kept in the tab's session storage. Keep `/__gateway/ui/` and the authenticated routes off the public internet at the ingress anyway; `POST /__gateway/data` and `GET /__gateway/bundles/*` must stay reachable for apps. Develop it with `cd frontend && GATEWAY=http://127.0.0.1:8080 pnpm dev`. |
+| `PUT /__gateway/bundles/<version>.zip` | Upload a bundle: the raw zip as the body (at most 256 MiB), named by its version, `4.81.0.zip` or a date in the configured format. Accepted only when it holds `index.html` and, with `BUNDLE_PUBKEY` set, a valid `bundle.sha256.sig`; 400 for a bad name, 413 when too large, 422 otherwise. A zip of the same name is replaced, which an `upload` token may not do (409). With an S3 source the zip goes to the bucket first, then into `versions/`. The gateway reloads before answering `{"version","files","replaced","reload_ms"}`. |
+| `GET /__gateway/bundles/<version>.zip` | The zip as uploaded, with ranges and no auth; 404 unless the gateway loaded it and serves it, so a blocked or refused zip cannot be installed. |
+| `GET /__gateway/bundles/<version>/<path>` | One file of a bundle exactly as zipped (the raw `index.html`, not the stamped page), with ranges and no auth, no cookies and no `index.html` fallback; 404 while the bundle is blocked. Over-the-air updaters install from it file by file: fetch `bundle.sha256` and `bundle.sha256.sig`, verify the signature with the publisher's public key, and hand the listed files to the updater (Capgo's `download({ manifest })`), which checks each file's SHA-256 and only downloads what it does not already hold. Call `POST /__gateway/data` natively: WebView requests are cross-origin and refused. |
 | `DELETE /__gateway/bundles/<version>.zip` | Remove a bundle from `versions/` and from the bucket, then reload: 204, 404 when absent, 409 for the default bundle (set another default first). Rules that pointed at it turn inactive. |
 | `POST /__gateway/reload` | Reload config and bundles now instead of at the watcher's next tick; answers `reload_ms`, `default`, `bundles`, `errors`, `issues`, and 500 with `error` when the previous snapshot was kept. |
-| `/__gateway/status` | Gateway `version` and `started_at`, `project_name`, `environment`, `setup_required` (no `config.pb` yet) and `auth` (a password is set), default and its source, base path, bundle `source` (`local` or `s3://bucket/prefix/`) with the last `sync` (`at`, `objects`, `error`) for a bucket, `signing` (whether `BUNDLE_PUBKEY` is set), `loaded_at`, reload count and last error, `errors` (a rejected config, refused bundles), memory the process holds from the OS (`resident_bytes`; the zips sit in the page cache, which a cgroup limit counts too), bundles with file counts, sizes, `zip_bytes` and `mod_time`, rules (with `active`), backend table, decisions counted by `via` since start, load issues. Behind Basic auth once a password is set. |
-| `/healthz` | 200 |
+| `/__gateway/status` | Gateway `version` and `started_at`, `project_name`, `environment`, `setup_required` (no `config.pb` yet) and `auth` (a password is set), default and its source, base path, bundle `source` (`local` or `s3://bucket/prefix/`) with the last `sync` (`at`, `objects`, `error`) for a bucket, `signing` (whether `BUNDLE_PUBKEY` is set), `loaded_at`, reload count and last error, `errors` (a rejected config, refused bundles), memory the process holds from the OS (`resident_bytes`; the zips sit in the page cache, which a cgroup limit counts too), bundles with file counts, sizes, `zip_bytes`, `mod_time`, `native` and `blocked`, rules (with `active`), backend table, decisions counted by `via` (and `refused`) and by bundle (`decisions_by_bundle`) since start, load issues. `read` scope once a password is set. |
+| `/healthz` | 200; 503 once the gateway is stopping, for about 6 s before it drains, so a load balancer or `HEALTHCHECK` stops sending traffic first. `gateway health` checks it from inside the image. |
 
 Cache policy: hashed files are `public, max-age=31536000, immutable`;
 everything else is `private, no-cache` with an ETag. Responses carry
@@ -261,12 +333,25 @@ iOS's URLSession does. Never put Cache Everything or an edge TTL on
 `/__gateway/*`, and purge `/__gateway/bundles/<version>/*` after re-uploading a
 version.
 
+The proxy's own timeouts still apply: Traefik's entry point `readTimeout` (60 s
+by default) cuts uploads that take longer, and a `writeTimeout` cuts slow
+downloads, although the gateway extends its deadlines by body size. Raise them
+on the entry point that serves the gateway. With the docker provider, Traefik
+stops routing to a container once its `HEALTHCHECK` turns unhealthy: on stop
+the gateway answers 503 there for about 6 s, then drains for up to 10 s, so
+give it `stop_grace_period: 20s` (on Kubernetes, a readiness probe on
+`/healthz` and `terminationGracePeriodSeconds` of at least 20).
+
 ## Signing bundles
 
 With `BUNDLE_PUBKEY` set, every bundle must contain `bundle.sha256`
 (`sha256sum` format, one line per file) and `bundle.sha256.sig` (its Ed25519
 signature, raw or hex). A bundle whose manifest is missing, unsigned, or lists
-a file that changed, is refused and its previous load keeps serving. Mobile
+a file that changed, is refused and its previous load keeps serving, once its
+open file checks out again. A zip changed in place on disk is caught at the
+next check, about 5 s, even with its mtime put back (not on Windows); until
+then its bytes go out unchecked, and hashed files served in that window are
+cached as immutable, so purge the CDN after such an incident. Mobile
 apps verify the same signature before installing, so one signature covers the
 web and over-the-air updates; write it as hex, which every HTTP client reads
 back unchanged. Gateways from before this change kept `versions/*.zip.sig`
@@ -290,68 +375,72 @@ copying a hand edit into place.
 
 ## Frontend integration
 
-Angular apps can skip the snippet below: `libs/angular` ships `provideBundlePilot()` (Angular 19+, standalone or NgModule providers), and `libs/core` the same logic for any framework; see `libs/README.md`. The gateway stamps `<meta name="bundle-pilot:bundle" content="4.79.0">` into every served `index.html` (once, at load, so the page goes out precompressed), so the app can read the version it runs as instead of carrying a copy of the zip name.
+Use `@bundle-pilot/angular`, one provider for Angular 18 to 22, or
+`@bundle-pilot/core` for any framework; see [libs/README.md](../libs/README.md).
+By hand, the contract is:
 
-Post every fact the app knows, and reload when the answer differs from the
-version it was built as (`environment.version` must equal the zip's name
-without `.zip`). After a successful call, keep the facts you sent in the
-`bundle_facts` cookie: the gateway then decides `index.html` from that cookie
-on the next visit, and the app only needs to call `/data` again when its facts
-changed (login, logout, a store switch, a new backend version). Skip it when
-the URL pins a bundle with `?bundle=`, or the pin and the rules keep
-reloading each other.
+- Every served `index.html` carries `<meta name="bundle-pilot:bundle" content="4.79.0">`,
+  the bundle the page runs, stamped once at load so the page still goes out
+  precompressed.
+- Before showing a route that depends on the facts, post them to
+  `/__gateway/data` and switch when `bundle` differs from the meta tag. Skip
+  it when the URL pins a bundle with `?bundle=`, or the pin and the rules keep
+  reloading each other.
+- Write the facts into the `bundle_facts` cookie (`encodeURIComponent` of the
+  JSON, `path=/`) as soon as they change: the gateway decides `index.html`
+  from it on the first byte, so returning users land on their bundle without
+  a switch.
+- Switch with `location.replace` to a URL carrying `ngsw-bypass=<bundle>`. The
+  Angular service worker leaves that request to the network, and the landing
+  page can tell whether it got the bundle it asked for. When it did not, stay:
+  the gateway disagrees (blocked cookies, a pin), and switching again loops.
+- A decision kept on the client only holds while the page runs the bundle it
+  names, since a service worker may serve an old `index.html`. Revalidate it
+  in the background.
 
-```ts
-const PIN = new URLSearchParams(location.search).has('bundle');
-const synced = () => decodeURIComponent(document.cookie.match(/(?:^|; )bundle_facts=([^;]*)/)?.[1] ?? '');
+Send ids as strings when they can exceed 2^53.
 
-export async function syncBundle(facts: Record<string, string | number | boolean>) {
-  const body = JSON.stringify(Object.fromEntries(Object.entries(facts).sort()));
-  if (PIN || body === synced()) return; // index.html was already decided from the cookie
-  const res = await fetch('/__gateway/data', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body,
-  }).catch(() => null);
-  if (!res?.ok) return;
-  document.cookie = `bundle_facts=${encodeURIComponent(body)}; path=/; max-age=2592000; samesite=lax`;
-  const { bundle } = await res.json();
-  if (bundle === environment.version) return sessionStorage.removeItem('gw.target');
-  if (sessionStorage.getItem('gw.target') === bundle) return; // one reload per target per tab
-  sessionStorage.setItem('gw.target', bundle);
-  // Angular service worker: let it fetch the new ngsw.json first, or the reload serves the cached index.
-  // await swUpdate.checkForUpdate(); await swUpdate.activateUpdate();
-  location.reload();
-}
+### Over-the-air updates
 
-// boot:  syncBundle({ backend: posVersion, app: shellVersion, ...JSON.parse(localStorage.getItem('gw.facts') ?? '{}') })
-// login: localStorage.setItem('gw.facts', JSON.stringify({ tenant, storeID, user })), then syncBundle again with everything
+A bundle that needs a newer native app says so in its `index.html`, which the
+signature already covers:
+
+```html
+<meta name="bundle-pilot:native" content=">=4.102.0">
 ```
 
-Send ids as strings when they can exceed 2^53. Returning users get their
-bundle from the cookie on the first request. Runtime config files such as `environments/env.js` are served from
-the selected bundle; keep one copy per version.
+The content takes comparisons with `MAJOR.MINOR.PATCH` app versions that must
+all hold (`">=4.102.0 <5.0.0"`); a pre-release such as `4.102.0-prod` sorts
+below its release, so write plain versions. A zip whose tag does not parse is
+refused. Apps post their version as the `native` fact (Capacitor:
+`App.getInfo().version`). Rules then skip a bundle the app cannot run, backend
+steps fall back to an older one, and the default gives way to the closest older
+bundle that runs, with `via: native`; when none does, `/data` answers 400 and
+the app keeps the bundle it has. Requests without `native`, such as the web's,
+are unaffected. Runtime config files such as
+`environments/env.js` are served from the selected bundle; keep one copy per
+version.
 
 ## Structure
 
 ```
-cmd/gateway                    wiring: config -> bundlefs -> usecase -> handler -> http.Server; check, import
+cmd/gateway                    wiring: env -> bundlefs -> usecase -> handler -> http.Server; check, import
 proto/                         the config contract (buf.yaml, buf.gen.yaml at the root)
 internal/gen/configv1          Go generated from proto/, committed
-internal/config                env parsing and validation
+internal/env                   environment variables: PORT, DIST, LOG_LEVEL, BUNDLE_PUBKEY
 internal/domain                Bundle, Snapshot, Config (rules, backend table): selection, no I/O
 internal/usecase               Catalog: reload, watch, atomic snapshot swap (declares the Source port)
-internal/infrastructure        bundlefs (zip loader, dedup, compression), mirror (bucket sync, s3 strategy)
+internal/infrastructure        bundlefs (zip loader, in-place serving, config history), mirror (bucket sync, s3 strategy)
 internal/handler               HTTP routes, cookies, ngsw.json stamping
-internal/pkg                   asset (in-memory static serving), version (comparison)
-internal/ui                    embeds the admin UI build (frontend/ writes internal/ui/build)
-frontend/                      admin UI: SvelteKit 2 + Svelte 5, Tailwind 4, pnpm; feature-sliced under src/lib (widgets, features, entities, shared), routes are the app layer
+internal/pkg                   asset (serving from zips and memory: encodings, ranges, ETags), version (comparison)
+internal/ui                    embeds the admin UI build (frontend/ writes internal/ui/build/app)
+frontend/                      admin UI: SvelteKit 3 + Svelte 5, Tailwind 4, pnpm; feature-sliced under src/lib (widgets, features, entities, shared), routes are the app layer
 ```
 
 ## Run
 
 ```
-make ui           # pnpm build of frontend/ into internal/ui/build, embedded by go build
+make ui           # pnpm build of frontend/ into internal/ui/build/app, embedded by go build
 make dev          # go run ./cmd/gateway
 make build && bin/gateway check dist
 make gen          # regenerate Go and TypeScript from proto/ after editing the contract

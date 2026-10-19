@@ -211,8 +211,8 @@ docker compose up --build
 
 Jenkins releases every `vX.Y.Z` tag at that one version: archives for macOS
 (Intel and Apple silicon), Windows and Linux, a multi-arch image on
-`ghcr.io/zenkiet/bundle-pilot`, and the npm packages. See
-[.jenkins/README.md](.jenkins/README.md).
+`ghcr.io/zenkiet/bundle-pilot`, and the npm packages; see the
+[Jenkinsfile](Jenkinsfile).
 
 ## Contributing
 

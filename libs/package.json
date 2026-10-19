@@ -1,0 +1,10 @@
+{
+	"name": "bundle-pilot-libs",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"build": "pnpm -r build",
+		"check": "pnpm -r check",
+		"test": "pnpm -r test"
+	}
+}

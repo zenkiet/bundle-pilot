@@ -1,0 +1,33 @@
+{
+	"name": "@bundle-pilot/core",
+	"version": "0.0.0",
+	"description": "Ask Bundle Pilot which bundle this page should run, and switch when it differs.",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/zenkiet/bundle-pilot.git",
+		"directory": "libs/core"
+	},
+	"homepage": "https://github.com/zenkiet/bundle-pilot#readme",
+	"type": "module",
+	"sideEffects": false,
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "tsc -p tsconfig.json",
+		"check": "tsc -p tsconfig.json --noEmit",
+		"test": "node --test src/index.test.ts"
+	},
+	"devDependencies": {
+		"typescript": "~6.0.3"
+	}
+}

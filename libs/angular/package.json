@@ -1,0 +1,44 @@
+{
+	"name": "@bundle-pilot/angular",
+	"version": "0.0.0",
+	"description": "One Angular provider: every route follows the bundle Bundle Pilot picks for the app's facts.",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/zenkiet/bundle-pilot.git",
+		"directory": "libs/angular"
+	},
+	"homepage": "https://github.com/zenkiet/bundle-pilot#readme",
+	"type": "module",
+	"sideEffects": false,
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "tsc -p tsconfig.json",
+		"check": "tsc -p tsconfig.json --noEmit"
+	},
+	"dependencies": {
+		"@bundle-pilot/core": "workspace:*"
+	},
+	"peerDependencies": {
+		"@angular/common": ">=18.0.0 <23.0.0",
+		"@angular/core": ">=18.0.0 <23.0.0",
+		"@angular/router": ">=18.0.0 <23.0.0"
+	},
+	"devDependencies": {
+		"@angular/common": "22.2.0",
+		"@angular/core": "22.2.0",
+		"@angular/router": "22.2.0",
+		"rxjs": "^7.8.2",
+		"typescript": "~6.0.3"
+	}
+}
