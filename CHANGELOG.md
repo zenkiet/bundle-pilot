@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.2.0 - 2026-10-20
+#### 🚀 Features
+- ✨ add over-the-air updates for Capacitor apps - (693da19) - *zenkiet*
+
+- - -
+
 ## v0.1.0 - 2026-10-19
 #### 🚀 Features
 - ✨ add client libraries for Angular and plain JavaScript - (f6e9238) - *zenkiet*
