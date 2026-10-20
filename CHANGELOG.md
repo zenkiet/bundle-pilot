@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.2.1 - 2026-10-20
+#### 🐛 Bug Fixes
+- 🐛 keep admin UI requests under the gateway's path prefix - (84e7d8d) - *zenkiet*
+
+- - -
+
 ## v0.2.0 - 2026-10-20
 #### 🚀 Features
 - ✨ add over-the-air updates for Capacitor apps - (693da19) - *zenkiet*
