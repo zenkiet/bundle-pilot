@@ -3,7 +3,7 @@
 	import { deleteBundle, setBlocked } from '#lib/entities/bundle/api.ts';
 	import { config } from '#lib/entities/config/store.svelte.ts';
 	import { status } from '#lib/entities/status/store.svelte.ts';
-	import { message } from '#lib/shared/lib/api.ts';
+	import { message, root } from '#lib/shared/lib/api.ts';
 	import Dialog from '#lib/shared/ui/Dialog.svelte';
 	import Menu from '#lib/shared/ui/Menu.svelte';
 	import { toast } from '#lib/shared/ui/Toast.svelte';
@@ -14,7 +14,7 @@
 	let busy = $state(false);
 	const isDefault = $derived(status.value?.default === version);
 	const blocked = $derived(!!status.value?.bundles.find((b) => b.version === version)?.blocked);
-	const url = () => `${location.origin}/?bundle=${encodeURIComponent(version)}`;
+	const url = () => location.origin + root(`/?bundle=${encodeURIComponent(version)}`);
 
 	async function block(on: boolean) {
 		busy = true;

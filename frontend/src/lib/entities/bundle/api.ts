@@ -5,13 +5,13 @@ interface UploadResult {
 	reload_ms: number;
 }
 
-import { request } from '#lib/shared/lib/api.ts';
+import { request, root } from '#lib/shared/lib/api.ts';
 import { session } from '#lib/shared/lib/session.svelte.ts';
 
 export function uploadBundle(file: File, onProgress: (pct: number) => void) {
 	return new Promise<UploadResult>((resolve, reject) => {
 		const xhr = new XMLHttpRequest();
-		xhr.open('PUT', `/__gateway/bundles/${encodeURIComponent(file.name)}`);
+		xhr.open('PUT', root(`/__gateway/bundles/${encodeURIComponent(file.name)}`));
 		if (session.header) xhr.setRequestHeader('Authorization', session.header);
 		xhr.upload.onprogress = (e) =>
 			e.lengthComputable && onProgress(Math.round((e.loaded / e.total) * 100));

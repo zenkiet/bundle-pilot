@@ -4,11 +4,13 @@ import { session } from './session.svelte';
 
 export const unauthorized = new Error('sign in required');
 
+export const root = (path: string) => resolve('/').replace(/\/__gateway\/ui\/$/, '') + path;
+
 export async function request(url: string, init: RequestInit = {}): Promise<Response> {
 	const headers = new Headers(init.headers);
 	if (session.header) headers.set('Authorization', session.header);
 	if (session.setup) headers.set('X-Setup-Token', session.setup);
-	const res = await fetch(url, { cache: 'no-store', ...init, headers });
+	const res = await fetch(root(url), { cache: 'no-store', ...init, headers });
 	if (res.status === 401) {
 		session.clear();
 		if (!location.pathname.includes('/login')) void goto(resolve('/login'));
