@@ -1,7 +1,7 @@
 allowBuilds:
   esbuild: true
 minimumReleaseAgeExclude:
-  - '@lucide/svelte@1.56.0 || 1.57.0'
+  - '@lucide/svelte@1.56.0 || 1.57.0 || 1.60.0'
   - '@typescript-eslint/eslint-plugin@8.71.2'
   - '@typescript-eslint/parser@8.71.2'
   - '@typescript-eslint/project-service@8.71.2'

@@ -88,7 +88,7 @@ func (f *failures) forget(key netip.Prefix) {
 // Writes sent from another site's page are refused, whatever credentials the browser adds.
 func (rt *Router) auth(need string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if err := crossOrigin.Check(r); err != nil {
+		if err := checkOrigin(r); err != nil {
 			http.Error(w, "cross-origin request refused", http.StatusForbidden)
 			return
 		}

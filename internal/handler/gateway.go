@@ -18,9 +18,19 @@ const maxFactsBody = 4 << 10
 
 var crossOrigin = http.NewCrossOriginProtection()
 
+// checkOrigin refuses a write sent from another site's page
+func checkOrigin(r *http.Request) error {
+	if host := r.Header.Get("X-Forwarded-Host"); host != "" {
+		proxied := *r
+		proxied.Host = host
+		r = &proxied
+	}
+	return crossOrigin.Check(r)
+}
+
 // data decides the bundle for the posted facts and applies it; X-Dry-Run only answers.
 func (rt *Router) data(w http.ResponseWriter, r *http.Request) {
-	if err := crossOrigin.Check(r); err != nil {
+	if err := checkOrigin(r); err != nil {
 		http.Error(w, "cross-origin request refused", http.StatusForbidden)
 		return
 	}
