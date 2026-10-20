@@ -25,8 +25,8 @@ const STORE = 'bundle-pilot';
 export const bundleVersion = (): string =>
 	globalThis.document?.querySelector('meta[name="bundle-pilot:bundle"]')?.getAttribute('content') ?? '';
 
-// key drops what the gateway ignores and sorts, so equal facts give equal keys; '' when none are left.
-function key(facts: Facts | null | undefined): string {
+/** factsKey drops what the gateway ignores and sorts, so equal facts give equal keys; '' when none are left. */
+export function factsKey(facts: Facts | null | undefined): string {
 	const e = Object.entries(facts ?? {}).filter(([, v]) => v != null && v !== '');
 	return e.length ? JSON.stringify(Object.fromEntries(e.sort(([a], [b]) => (a < b ? -1 : 1)))) : '';
 }
@@ -86,7 +86,7 @@ export function createPilot({ endpoint = '/__gateway/data', timeout = 3000, befo
 		version,
 		check(facts, url, alive = () => true) {
 			if (switching) return false;
-			const k = key(facts);
+			const k = factsKey(facts);
 			if (!k) return true;
 			if (k !== written) {
 				written = k;

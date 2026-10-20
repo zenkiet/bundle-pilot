@@ -1,0 +1,44 @@
+{
+	"name": "@bundle-pilot/capacitor",
+	"version": "0.0.0",
+	"description": "Over-the-air updates for Capacitor apps: install the signed bundle Bundle Pilot picks, with Capgo.",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/zenkiet/bundle-pilot.git",
+		"directory": "libs/capacitor"
+	},
+	"homepage": "https://github.com/zenkiet/bundle-pilot#readme",
+	"type": "module",
+	"sideEffects": false,
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "tsc -p tsconfig.json",
+		"check": "tsc -p tsconfig.json --noEmit",
+		"test": "node --test src/manifest.test.ts"
+	},
+	"dependencies": {
+		"@bundle-pilot/core": "workspace:*"
+	},
+	"peerDependencies": {
+		"@capacitor/app": ">=8.0.0",
+		"@capacitor/core": ">=8.0.0",
+		"@capgo/capacitor-updater": ">=8.0.0"
+	},
+	"devDependencies": {
+		"@capacitor/app": "^8.1.1",
+		"@capacitor/core": "^8.5.2",
+		"@capgo/capacitor-updater": "^8.52.1",
+		"typescript": "~6.0.3"
+	}
+}

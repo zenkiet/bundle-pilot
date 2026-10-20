@@ -162,6 +162,7 @@ The app has to send its facts and reload when the answer changes. The
 |---|---|---|
 | `@bundle-pilot/angular` | Angular 18 to 22, one `provideBundlePilot()` call | Ready |
 | `@bundle-pilot/core` | Any framework or plain JavaScript, the same logic without Angular | Ready |
+| `@bundle-pilot/capacitor` | Capacitor apps: signed over-the-air updates with Capgo | Ready |
 | React and Vue adapters | Thin wrappers over `core` | Planned |
 
 ```ts

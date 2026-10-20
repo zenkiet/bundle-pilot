@@ -1,75 +1,109 @@
-# Bundle Pilot SDK
+<p align="center">
+  <img src="../frontend/src/lib/assets/favicon.svg" alt="Bundle Pilot" width="120">
+</p>
 
-Client packages for apps served by the gateway: `angular` is one provider,
-`core` the same logic for any framework.
+<h1 align="center">Bundle Pilot SDK</h1>
 
+<p align="center">
+  Client packages that run each visitor on the frontend bundle the <a href="../README.md">Bundle Pilot</a> gateway picks,<br>
+  on the web and in native apps.
+</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/@bundle-pilot/core"><img src="https://img.shields.io/npm/v/@bundle-pilot/core?color=0f2a3a&label=%40bundle-pilot%2Fcore" alt="@bundle-pilot/core on npm"></a>
+  <a href="https://www.npmjs.com/package/@bundle-pilot/angular"><img src="https://img.shields.io/npm/v/@bundle-pilot/angular?color=DD0031&label=%40bundle-pilot%2Fangular" alt="@bundle-pilot/angular on npm"></a>
+  <a href="https://www.npmjs.com/package/@bundle-pilot/capacitor"><img src="https://img.shields.io/npm/v/@bundle-pilot/capacitor?color=119EFF&label=%40bundle-pilot%2Fcapacitor" alt="@bundle-pilot/capacitor on npm"></a>
+  <img src="https://img.shields.io/badge/types-TypeScript-3178C6?logo=typescript&logoColor=white" alt="TypeScript">
+</p>
+
+---
+
+## Packages
+
+| Package | For | Size (min+gzip) |
+|---|---|---|
+| [`@bundle-pilot/angular`](angular/README.md) | Angular 18 to 22: one `provideBundlePilot()` guards every route | 0.5 kB + core |
+| [`@bundle-pilot/core`](core/README.md) | Any framework or none: `createPilot().check(facts)` | 1.1 kB, no dependencies |
+| [`@bundle-pilot/capacitor`](capacitor/README.md) | Capacitor 8 apps: signed over-the-air updates with Capgo | 1.9 kB + core |
+
+### Which one do I need?
+
+```mermaid
+flowchart LR
+    A{Where does the app run?} -->|browser| B{Angular?}
+    A -->|Capacitor app| C["@bundle-pilot/capacitor<br>+ @bundle-pilot/angular, or core"]
+    B -->|yes| D["@bundle-pilot/angular"]
+    B -->|no| E["@bundle-pilot/core"]
 ```
-pnpm install && pnpm build && pnpm test   # in libs/
-```
 
-Both are published with the gateway, at the version of its release tag, so
-SDK 1.4.0 goes with gateway 1.4.0. The `0.0.0` in each `package.json` is a
-placeholder that the release replaces: don't bump it by hand.
+- **An Angular web app:** `@bundle-pilot/angular`. That is one provider and nothing else.
+- **React, Vue, Svelte or plain JavaScript:** `@bundle-pilot/core`. Call `check`
+  from your router's guard or hook.
+- **A Capacitor app:** `@bundle-pilot/capacitor`. With Angular, pass its pilot
+  to `provideBundlePilot`, so the web build and the native app share the same code.
 
-## @bundle-pilot/angular
-
-Angular 18 to 22, standalone or NgModule (put it in the root providers):
+## In 30 seconds
 
 ```ts
+// Angular, web
 provideBundlePilot({
   facts: () => {
     const store = inject(StoreService);
-    return store.id ? { storeID: store.id, backend: store.posVersion } : null; // null while signed out
+    return store.id ? { storeID: store.id, backend: store.posVersion } : null;
   },
-  beforeSwitch: () => inject(SplashService).show(), // optional
-}),
+});
 ```
-
-Every route is guarded, lazy children included. A navigation whose facts call
-for another bundle becomes a page load of that bundle at the same URL; any
-other goes through, synchronously when the decision is already known.
-
-| Option | Default | |
-|---|---|---|
-| `facts` | required | runs in the guard, so `inject()` works; null or empty skips |
-| `beforeSwitch` | none | runs before the page leaves, in an injection context; awaited, then two frames to paint |
-| `timeout` | 3000 ms | for a decision a navigation waits on; past it, the page stays |
-| `endpoint` | `/__gateway/data` | |
-
-## @bundle-pilot/core
 
 ```ts
-import { createPilot } from '@bundle-pilot/core';
-
-const pilot = createPilot({ beforeSwitch });
-// before showing a route: true to go on, false while the page leaves for another bundle
-const go = await pilot.check({ storeID, backend }, '/next');
+// Angular, Capacitor: the same provider, with the over-the-air pilot
+provideBundlePilot({
+  facts,
+  pilot: () => createOtaPilot({ gateway: 'https://ota.example.com', publicKey, version }),
+});
 ```
 
-`bundleVersion()` returns the version the gateway stamped into `index.html`.
+```ts
+// Any framework
+const pilot = createPilot();
+router.beforeEach((to) => pilot.check(currentFacts(), router.resolve(to).href));
+```
 
-## How it decides
+## How it fits together
 
-- One `POST /__gateway/data` per set of facts per page, shared by every call.
-  A failure fails open and is not retried on that page.
-- The facts go into the `bundle_facts` cookie as soon as they change, so the
-  gateway serves the right `index.html` on the first byte of the next visit.
-- The last decision is kept in localStorage. While it names the running
-  bundle, `check` returns `true` at once and revalidates in the background; a
-  different answer switches at the next navigation.
-- A switch is `location.replace(url?ngsw-bypass=<bundle>)`: it skips the
-  service worker, and the page that lands checks it got that bundle. If not,
-  the gateway disagreed (blocked cookies, a pin) and it stays rather than loop.
-- Nothing happens without the gateway's meta tag (dev server), with a
-  `?bundle=` pin, without facts, or on the server. A cancelled or redirected
-  navigation never switches, nor does a page whose cookies are blocked.
+```mermaid
+sequenceDiagram
+    participant App as App (any package)
+    participant GW as Bundle Pilot gateway
+    App->>GW: POST /__gateway/data { storeID, backend, native? }
+    GW-->>App: { bundle: "4.80.0", via: "rule:pilot-stores" }
+    alt bundle is the one running
+        App->>App: go on (and answer at once next time)
+    else web: another bundle
+        App->>GW: location.replace(url?ngsw-bypass=4.80.0)
+        GW-->>App: index.html of 4.80.0
+    else native: another bundle
+        App->>GW: GET bundle.sha256 + .sig, then the files
+        App->>App: verify Ed25519, install with Capgo, restart
+    end
+```
 
-## Caveats
+Your app sends facts, and the gateway's rules decide. You pilot a build with
+some stores, raise a percentage, or back out of a release from the admin UI,
+with no new deploy of the app.
 
-- A bypassed navigation skips the service worker's update check, and files it
-  caches without a hash in their name come from the old version until it
-  updates. Call `SwUpdate.checkForUpdate()`, without awaiting, in
-  `beforeSwitch` to update it sooner.
-- `router.resetConfig` after startup drops the guards.
-- Cancelling a `beforeunload` prompt during a switch leaves the splash up.
-- Tabs with different facts flip the gateway's cookies at every switch.
+## Versioning
+
+All packages are released together with the gateway, from one `vX.Y.Z` tag, so
+`@bundle-pilot/*` 1.4.0 goes with gateway 1.4.0. The `0.0.0` in each
+`package.json` is a placeholder that the release replaces: don't bump it by hand.
+
+## Development
+
+```sh
+pnpm install
+pnpm build   # tsc, every package (core first)
+pnpm test    # node --test
+```
+
+Each package's README is the page npm shows. Keep its links and images
+absolute.

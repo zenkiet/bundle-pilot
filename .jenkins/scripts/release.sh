@@ -6,12 +6,16 @@ source "$(dirname "$0")/lib.sh"
 : "${GHCR_TOKEN:?missing Jenkins credential ghcr-token}"
 : "${NPM_TOKEN:?missing Jenkins credential npm-token}"
 
+export GITHUB_TOKEN="${GITHUB_TOKEN_PSW:-$GITHUB_TOKEN}"
+GHCR_TOKEN="${GHCR_TOKEN_PSW:-$GHCR_TOKEN}"
+GHCR_USER="${GHCR_TOKEN_USR:-${GHCR_USER:-zenkiet}}"
+
 # npm tokens expire: fail here, before anything is published.
 log "npm token"
 curl -fsS -H "Authorization: Bearer $NPM_TOKEN" https://registry.npmjs.org/-/whoami ||
 	{ echo "npm-token was rejected: renew it" >&2; exit 1; }
 
 log "Release $TAG"
-echo "$GHCR_TOKEN" | docker login ghcr.io -u "${GHCR_USER:-zenkiet}" --password-stdin
+echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
 trap 'docker logout ghcr.io >/dev/null' EXIT
 goreleaser release --clean
