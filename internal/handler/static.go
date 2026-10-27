@@ -56,14 +56,29 @@ func (rt *Router) static(w http.ResponseWriter, r *http.Request, snap *domain.Sn
 	}
 	extendDeadline(w, a.Size())
 	w.Header()["X-Bundle-Version"] = owner.Tag()
-	if a == b.Index() && b.Link != "" {
-		w.Header().Set("Link", b.Link)
+	if a == b.Index() && len(b.Link) > 0 {
+		w.Header().Set("Link", link(b.Link, rel))
 	}
 	if rel == "/ngsw.json" {
 		serveManifest(w, r, a)
 		return
 	}
 	a.ServeHTTP(w, r)
+}
+
+// link joins a page's Link values for the page at rel. A Link URL resolves against the page,
+// not its <base>, and a proxy that mounts the app under a prefix rewrites only <base>, so a
+// relative URL climbs from the page's folder back to the base.
+func link(values []string, rel string) string {
+	up := strings.Repeat("../", strings.Count(rel, "/")-1)
+	out := make([]string, len(values))
+	for i, v := range values {
+		if !strings.HasPrefix(v, "/") && !strings.Contains(v, "://") {
+			v = up + v
+		}
+		out[i] = "<" + v
+	}
+	return strings.Join(out, ", ")
 }
 
 // serveManifest stamps ngsw.json with the bundle_rev cookie, so the service worker

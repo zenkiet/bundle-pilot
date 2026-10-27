@@ -309,12 +309,11 @@ func gzipped(b []byte) []byte {
 	return buf.Bytes()
 }
 
-// indexMeta reads <base href> ("/" without one), the app versions the bundle runs on, a
-// Link header preloading up to 12 module scripts, modulepreloads and stylesheets, and the
+// indexMeta reads <base href> ("/" without one), the app versions the bundle runs on, the
+// Link values preloading up to 12 module scripts, modulepreloads and stylesheets, and the
 // offset just after the <head> tag (0 without one).
-func indexMeta(index []byte) (base, link, native string, head int) {
+func indexMeta(index []byte) (base string, links []string, native string, head int) {
 	base = "/"
-	var links []string
 	z := html.NewTokenizer(bytes.NewReader(index))
 	for off := 0; ; {
 		tt := z.Next()
@@ -364,12 +363,5 @@ func indexMeta(index []byte) (base, link, native string, head int) {
 			}
 		}
 	}
-	links = links[:min(len(links), 12)]
-	for i, l := range links {
-		if !strings.HasPrefix(l, "/") && !strings.Contains(l, "://") {
-			l = strings.TrimSuffix(base, "/") + "/" + l
-		}
-		links[i] = "<" + l
-	}
-	return base, strings.Join(links, ", "), native, head
+	return base, links[:min(len(links), 12)], native, head
 }

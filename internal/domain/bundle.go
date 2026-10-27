@@ -23,8 +23,8 @@ type Bundle struct {
 	Zip      io.ReaderAt // the zip as loaded, for downloads
 	ZipBytes int64
 	ModTime  time.Time
-	Link     string // a Link header that preloads the page's main scripts and styles
-	Native   string // the app versions it runs on, from <meta name="bundle-pilot:native">
+	Link     []string // preloads for the page's main scripts and styles, `url>; rel=...` with url as index.html has it
+	Native   string   // the app versions it runs on, from <meta name="bundle-pilot:native">
 	base     string
 	tag      []string
 	files    map[string]*asset.Asset
