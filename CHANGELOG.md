@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.2.3 - 2026-10-27
+#### ♻️ Code Refactoring
+- ♻️ simplify the gateway and fix upload, sync and rule bugs - (d41b348) - *zenkiet*
+
+- - -
+
 ## v0.2.2 - 2026-10-20
 #### 🐛 Bug Fixes
 - 🐛 accept same-origin writes behind a path-prefix proxy - (0927839) - *zenkiet*
