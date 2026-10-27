@@ -12,8 +12,8 @@ import (
 
 // Step serves Bundle to backends at or above Backend.
 type Step struct {
-	Backend string `json:"backend"`
-	Bundle  string `json:"bundle"`
+	Backend string
+	Bundle  string
 }
 
 // Mapping is the backend table, sorted by Backend, oldest first.

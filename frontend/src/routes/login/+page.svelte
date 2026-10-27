@@ -3,6 +3,7 @@
 	import { resolve } from '$app/paths';
 	import { Eye, EyeOff } from '@lucide/svelte';
 	import { status } from '#lib/entities/status/store.svelte.ts';
+	import { unauthorized } from '#lib/shared/lib/api.ts';
 	import AppearanceSelector from '#lib/features/toggle-theme/AppearanceSelector.svelte';
 	import { session } from '#lib/shared/lib/session.svelte.ts';
 	import Banner from '#lib/shared/ui/Banner.svelte';
@@ -10,7 +11,7 @@
 	let user = $state('admin');
 	let password = $state('');
 	let show = $state(false);
-	let failed = $state(false);
+	let failed = $state('');
 	let busy = $state(false);
 
 	async function signIn(e: SubmitEvent) {
@@ -21,7 +22,7 @@
 		busy = false;
 		if (status.error) {
 			session.clear();
-			failed = true;
+			failed = status.error === unauthorized.message ? 'Wrong username or password' : status.error;
 			return;
 		}
 		await goto(resolve('/'));
@@ -35,7 +36,7 @@
 			<h1 class="text-xl leading-7 font-semibold">Sign in</h1>
 			<span class="sup">{status.value?.project_name || 'Bundle Pilot'} · admin</span>
 		</div>
-		{#if failed}<Banner status="error" title="Wrong username or password" />{/if}
+		{#if failed}<Banner status="error" title={failed} />{/if}
 		<label class="field"
 			><span class="field-label">Username</span><input
 				class="input input-lg mono"

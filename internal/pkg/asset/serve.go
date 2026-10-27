@@ -2,6 +2,7 @@ package asset
 
 import (
 	"bytes"
+	"cmp"
 	"io"
 	"net/http"
 	"slices"
@@ -32,9 +33,8 @@ func (a *Asset) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if v.enc != nil {
 		h["Content-Encoding"] = v.enc
 	}
-	c := &checked{ReadSeekCloser: v.open()}
+	c := &checked{ReadSeeker: v.open()}
 	http.ServeContent(w, r, "", time.Time{}, c)
-	_ = c.Close()
 	if c.err != nil {
 		panic(http.ErrAbortHandler)
 	}
@@ -42,12 +42,12 @@ func (a *Asset) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // checked remembers a read error, which ServeContent drops.
 type checked struct {
-	io.ReadSeekCloser
+	io.ReadSeeker
 	err error
 }
 
 func (c *checked) Read(p []byte) (int, error) {
-	n, err := c.ReadSeekCloser.Read(p)
+	n, err := c.ReadSeeker.Read(p)
 	if err != nil && err != io.EOF {
 		c.err = err
 	}
@@ -79,9 +79,7 @@ func negotiate(accept []string, a *Asset) encoding {
 	}
 	br, gz, star := unset, unset, unset
 	for _, line := range accept {
-		for line != "" {
-			var tok string
-			tok, line, _ = strings.Cut(line, ",")
+		for tok := range strings.SplitSeq(line, ",") {
 			name, params, _ := strings.Cut(tok, ";")
 			q := accepted
 			if qZero(params) {
@@ -98,16 +96,10 @@ func negotiate(accept []string, a *Asset) encoding {
 			}
 		}
 	}
-	if br == unset {
-		br = star
-	}
-	if gz == unset {
-		gz = star
-	}
 	switch {
-	case br == accepted && a.has(brotli):
+	case cmp.Or(br, star) == accepted && a.has(brotli):
 		return brotli
-	case gz == accepted && a.has(gzipped):
+	case cmp.Or(gz, star) == accepted && a.has(gzipped):
 		return gzipped
 	}
 	return identity
@@ -115,9 +107,7 @@ func negotiate(accept []string, a *Asset) encoding {
 
 // qZero reports whether params set q=0, which refuses the encoding.
 func qZero(params string) bool {
-	for params != "" {
-		var p string
-		p, params, _ = strings.Cut(params, ";")
+	for p := range strings.SplitSeq(params, ";") {
 		k, v, ok := strings.Cut(strings.TrimSpace(p), "=")
 		if ok && (k == "q" || k == "Q") {
 			return strings.Trim(strings.TrimSpace(v), "0.") == ""

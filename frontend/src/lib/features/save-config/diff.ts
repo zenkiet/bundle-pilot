@@ -1,8 +1,9 @@
-import { equals } from '@bufbuild/protobuf';
+import { create, equals } from '@bufbuild/protobuf';
 import {
 	RuleSchema,
 	SourceSchema,
-	type Config
+	type Config,
+	type Rule
 } from '#lib/entities/config/gen/bundlepilot/config/v1/config_pb.ts';
 
 interface Change {
@@ -39,9 +40,10 @@ export function diff(a: Config, b: Config): Change[] {
 			diff: `${a.dateFormat || 'MM.dd.YYYY'} → ${b.dateFormat || 'MM.dd.YYYY'}`,
 			kind: 'changed'
 		});
-	const before = new Map(a.rules.map((r, i) => [r.id || `#${i + 1}`, r]));
+	const name = (r: Rule, i: number) => r.id || `#${i + 1}`;
+	const before = new Map(a.rules.map((r, i) => [name(r, i), r]));
 	b.rules.forEach((r, i) => {
-		const key = r.id || `#${i + 1}`;
+		const key = name(r, i);
 		const prev = before.get(key);
 		before.delete(key);
 		if (!prev) out.push({ what: `Rule · ${key}`, diff: `serves ${r.bundle}`, kind: 'added' });
@@ -53,6 +55,14 @@ export function diff(a: Config, b: Config): Change[] {
 			});
 	});
 	for (const [key] of before) out.push({ what: `Rule · ${key}`, diff: 'deleted', kind: 'removed' });
+	// The first match wins, so moving a rule changes what is served.
+	const kept = (x: Config, y: Config) => {
+		const other = new Set(y.rules.map(name));
+		return x.rules.map(name).filter((k) => other.has(k));
+	};
+	const order = kept(b, a);
+	if (order.join('\n') !== kept(a, b).join('\n'))
+		out.push({ what: 'Rule order', diff: order.join(', '), kind: 'changed' });
 	for (const k of new Set([...Object.keys(a.backend), ...Object.keys(b.backend)])) {
 		const from = a.backend[k],
 			to = b.backend[k];
@@ -63,13 +73,8 @@ export function diff(a: Config, b: Config): Change[] {
 			kind: !from ? 'added' : !to ? 'removed' : 'changed'
 		});
 	}
-	if (
-		!equals(
-			SourceSchema,
-			a.source ?? ({ $typeName: 'bundlepilot.config.v1.Source' } as never),
-			b.source ?? ({ $typeName: 'bundlepilot.config.v1.Source' } as never)
-		)
-	)
+	const local = create(SourceSchema);
+	if (!equals(SourceSchema, a.source ?? local, b.source ?? local))
 		out.push({
 			what: 'Source',
 			diff: `${a.source?.type || 'local'} → ${b.source?.type || 'local'}`,

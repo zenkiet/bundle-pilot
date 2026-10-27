@@ -3,6 +3,7 @@
 package env
 
 import (
+	"cmp"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/hex"
@@ -20,12 +21,7 @@ type Config struct {
 
 // Load reads the settings through getenv, normally os.Getenv.
 func Load(getenv func(string) string) (Config, error) {
-	env := func(key, fallback string) string {
-		if v := strings.TrimSpace(getenv(key)); v != "" {
-			return v
-		}
-		return fallback
-	}
+	env := func(key, fallback string) string { return cmp.Or(strings.TrimSpace(getenv(key)), fallback) }
 	cfg := Config{Addr: ":" + env("PORT", "8080"), Dist: env("DIST", "./dist")}
 	if err := cfg.LogLevel.UnmarshalText([]byte(env("LOG_LEVEL", "info"))); err != nil {
 		return cfg, fmt.Errorf("LOG_LEVEL: want debug, info, warn or error")

@@ -7,7 +7,6 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
-	"os"
 	"runtime/debug"
 	"slices"
 	"sync"
@@ -29,13 +28,8 @@ type Source interface {
 	Revision(id string) (*configv1.Config, error)
 	PutBundle(ctx context.Context, name string, r io.Reader) (files int, replaced bool, err error)
 	DeleteBundle(ctx context.Context, name string) error
-	OpenBundle(name string) (*os.File, error)
 	SyncState() (at time.Time, objects int, lastErr string)
 }
-
-// ErrNotApplied means a config was saved but is not serving yet: the reload after the
-// write failed, and the watcher retries it.
-var ErrNotApplied = errors.New("saved, but the reload that applies it failed")
 
 // Catalog holds the snapshot being served. Every change to what is stored (config saves,
 // uploads, deletes) goes through it and ends with a reload.
@@ -64,18 +58,25 @@ func (c *Catalog) Stats() (reloads uint64, lastErr string) {
 	return c.reloads.Load(), lastErr
 }
 
-// Config returns config.pb as stored, secrets included; fs.ErrNotExist before the first save.
-func (c *Catalog) Config() (*configv1.Config, error) { return c.src.ReadConfig() }
+// Config returns config.pb as stored, secrets included; an empty one before the first save.
+func (c *Catalog) Config() (*configv1.Config, error) {
+	pb, err := c.src.ReadConfig()
+	if errors.Is(err, fs.ErrNotExist) {
+		return &configv1.Config{}, nil
+	}
+	return pb, err
+}
 
 // UpdateConfig applies edit to the stored config, validates the result, saves it as by and
 // reloads. Updates run one at a time, so two read-modify-writes cannot lose each other. A
-// config.pb that cannot be read is never overwritten, because it holds the admin account.
+// config.pb that cannot be read is never overwritten, because it holds the admin account. A
+// reload that fails after the save is only logged: it shows as the last error, and the watcher
+// retries it.
 func (c *Catalog) UpdateConfig(by string, edit func(cur *configv1.Config) (*configv1.Config, error)) error {
 	c.writing.Lock()
 	defer c.writing.Unlock()
 	cur, err := c.src.ReadConfig()
-	snap := c.Current()
-	firstSave := snap == nil || snap.Setup != ""
+	firstSave := c.Current().Setup != ""
 	switch {
 	case errors.Is(err, fs.ErrNotExist) && firstSave:
 		cur = &configv1.Config{}
@@ -96,7 +97,7 @@ func (c *Catalog) UpdateConfig(by string, edit func(cur *configv1.Config) (*conf
 		return err
 	}
 	if err := c.Reload(); err != nil {
-		return fmt.Errorf("%w: %v", ErrNotApplied, err)
+		c.log.Error("config saved, but the reload failed, keeping previous snapshot", "error", err)
 	}
 	return nil
 }
@@ -123,8 +124,6 @@ func (c *Catalog) DeleteBundle(ctx context.Context, name string) error {
 	return c.Reload()
 }
 
-func (c *Catalog) OpenBundle(name string) (*os.File, error) { return c.src.OpenBundle(name) }
-
 func (c *Catalog) SyncState() (at time.Time, objects int, lastErr string) { return c.src.SyncState() }
 
 // Reload loads the source again and swaps in the new snapshot. On error the current snapshot
@@ -137,8 +136,7 @@ func (c *Catalog) Reload() error {
 		c.reloads.Add(1)
 		c.lastErr.Store(nil)
 	} else {
-		msg := err.Error()
-		c.lastErr.Store(&msg)
+		c.lastErr.Store(new(err.Error()))
 	}
 	return err
 }

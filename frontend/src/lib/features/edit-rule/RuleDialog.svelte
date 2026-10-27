@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { create } from '@bufbuild/protobuf';
+	import { untrack } from 'svelte';
 	import { Plus, X } from '@lucide/svelte';
 	import {
 		RuleSchema,
@@ -40,13 +41,16 @@
 			.join(' and ')
 	);
 
+	// Fill the form on open only: bundles is a new array on every status poll.
 	$effect(() => {
 		if (!open) return;
-		id = rule?.id ?? '';
-		note = rule?.note ?? '';
-		bundle = rule?.bundle ?? bundles[0] ?? '';
-		until = rule?.until ?? '';
-		rows = rule ? toRows(rule.when) : [{ fact: '', value: '' }];
+		untrack(() => {
+			id = rule?.id ?? '';
+			note = rule?.note ?? '';
+			bundle = rule?.bundle ?? bundles[0] ?? '';
+			until = rule?.until ?? '';
+			rows = rule ? toRows(rule.when) : [{ fact: '', value: '' }];
+		});
 	});
 
 	function submit() {

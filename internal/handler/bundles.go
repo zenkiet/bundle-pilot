@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"io"
 	"io/fs"
 	"net/http"
 	"path"
@@ -11,7 +12,6 @@ import (
 
 	"github.com/zenkiet/bundle-pilot/internal/gen/configv1"
 	"github.com/zenkiet/bundle-pilot/internal/pkg/version"
-	"github.com/zenkiet/bundle-pilot/internal/usecase"
 )
 
 const maxZip = 256 << 20
@@ -29,16 +29,15 @@ func (rt *Router) putBundle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	size := r.ContentLength
-	if size <= 0 {
-		size = maxZip // length unknown: allow time for the largest zip
+	if size <= 0 || size > maxZip {
+		size = maxZip // unknown or past the limit: allow time for the largest zip, never longer
 	}
 	extendDeadline(w, size)
 	start := time.Now()
 	files, replaced, err := rt.cat.PutBundle(r.Context(), v, http.MaxBytesReader(w, r.Body, maxZip))
 	if err != nil {
 		status := http.StatusUnprocessableEntity
-		var big *http.MaxBytesError
-		if errors.As(err, &big) {
+		if _, big := errors.AsType[*http.MaxBytesError](err); big {
 			status = http.StatusRequestEntityTooLarge
 		}
 		http.Error(w, err.Error(), status)
@@ -54,29 +53,20 @@ func (rt *Router) putBundle(w http.ResponseWriter, r *http.Request) {
 	}{Version: v, Files: files, Replaced: replaced, ReloadMs: time.Since(start).Milliseconds()})
 }
 
-// getBundle serves versions/<v>.zip, without auth: OTA updaters need its URL. Only zips the
-// gateway loaded and serves go out, so a blocked or refused one cannot be installed.
+// getBundle serves versions/<v>.zip, without auth: OTA updaters need its URL. Only the zip a
+// served bundle loaded from goes out, so a blocked or refused one cannot be installed.
 func (rt *Router) getBundle(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if v, ok := rt.zipVersion(name); !ok || rt.cat.Current().Bundle(v) == nil {
+	v, ok := rt.zipVersion(name)
+	b := rt.cat.Current().Bundle(v)
+	if !ok || b == nil {
 		http.NotFound(w, r)
-		return
-	}
-	f, err := rt.cat.OpenBundle(name)
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Cache-Control", "no-cache")
-	extendDeadline(w, info.Size())
-	http.ServeContent(w, r, name, info.ModTime(), f)
+	extendDeadline(w, b.ZipBytes)
+	http.ServeContent(w, r, name, b.ModTime, io.NewSectionReader(b.Zip, 0, b.ZipBytes))
 }
 
 // getBundleFile serves one file of a bundle as zipped, the raw index.html included, for OTA
@@ -156,7 +146,7 @@ func (rt *Router) setBlocked(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, errServing):
 		http.Error(w, v+" serves as the default: set another default first", http.StatusConflict)
 		return
-	case err != nil && !errors.Is(err, usecase.ErrNotApplied):
+	case err != nil:
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
@@ -167,21 +157,10 @@ func (rt *Router) setBlocked(w http.ResponseWriter, r *http.Request) {
 func (rt *Router) reload(w http.ResponseWriter, _ *http.Request) {
 	start := time.Now()
 	err := rt.cat.Reload()
-	snap := rt.cat.Current()
 	out := struct {
-		ReloadMs int64    `json:"reload_ms"`
-		Default  string   `json:"default"`
-		Bundles  int      `json:"bundles"`
-		Error    string   `json:"error,omitempty"`
-		Errors   []string `json:"errors"`
-		Issues   []string `json:"issues"`
-	}{
-		ReloadMs: time.Since(start).Milliseconds(),
-		Default:  snap.Default.Version,
-		Bundles:  len(snap.Bundles()),
-		Errors:   snap.Errors,
-		Issues:   snap.Issues,
-	}
+		ReloadMs int64  `json:"reload_ms"`
+		Error    string `json:"error,omitempty"`
+	}{ReloadMs: time.Since(start).Milliseconds()}
 	status := http.StatusOK
 	if err != nil {
 		out.Error, status = err.Error(), http.StatusInternalServerError

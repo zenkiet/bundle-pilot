@@ -5,7 +5,7 @@ interface UploadResult {
 	reload_ms: number;
 }
 
-import { request, root } from '#lib/shared/lib/api.ts';
+import { request, root, send } from '#lib/shared/lib/api.ts';
 import { session } from '#lib/shared/lib/session.svelte.ts';
 
 export function uploadBundle(file: File, onProgress: (pct: number) => void) {
@@ -25,18 +25,14 @@ export function uploadBundle(file: File, onProgress: (pct: number) => void) {
 }
 
 export async function deleteBundle(version: string) {
-	const res = await request(`/__gateway/bundles/${encodeURIComponent(version)}.zip`, {
-		method: 'DELETE'
-	});
-	if (!res.ok) throw new Error((await res.text()).trim());
+	await send(`/__gateway/bundles/${encodeURIComponent(version)}.zip`, { method: 'DELETE' });
 }
 
 /** Blocks a bundle at once, or lifts the block: blocked bundles stay on disk but are never served. */
 export async function setBlocked(version: string, blocked: boolean) {
-	const res = await request(`/__gateway/blocked/${encodeURIComponent(version)}`, {
+	await send(`/__gateway/blocked/${encodeURIComponent(version)}`, {
 		method: blocked ? 'PUT' : 'DELETE'
 	});
-	if (!res.ok) throw new Error((await res.text()).trim());
 }
 
 export async function reloadGateway() {

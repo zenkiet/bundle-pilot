@@ -14,9 +14,6 @@ import (
 	"github.com/zenkiet/bundle-pilot/internal/domain"
 )
 
-// session is the last Basic header that passed, and the password hash it was checked against.
-type session struct{ hash, header string }
-
 // caller is who sent a request and what they may do, kept in its context.
 type caller struct{ who, scope string }
 
@@ -56,21 +53,13 @@ func (f *failures) wait(key netip.Prefix, now time.Time) time.Duration {
 	return e.last.Add(delay).Sub(now)
 }
 
-// add counts a wrong password from key.
+// add counts a wrong password from key. Failures past failMax go first, which also bounds the
+// map by what the two PBKDF2 slots can check in that time.
 func (f *failures) add(key netip.Prefix, now time.Time) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if len(f.m) >= 10_000 {
-		maps.DeleteFunc(f.m, func(_ netip.Prefix, e failure) bool { return now.Sub(e.last) > failMax })
-		if len(f.m) >= 10_000 {
-			clear(f.m) // ponytail: a flood of addresses resets every count; a cap per subnet if that ever matters
-		}
-	}
-	e := f.m[key]
-	if now.Sub(e.last) > failMax {
-		e.n = 0
-	}
-	f.m[key] = failure{n: e.n + 1, last: now}
+	maps.DeleteFunc(f.m, func(_ netip.Prefix, e failure) bool { return now.Sub(e.last) > failMax })
+	f.m[key] = failure{n: f.m[key].n + 1, last: now}
 }
 
 func (f *failures) forget(key netip.Prefix) {
@@ -85,13 +74,10 @@ func (f *failures) forget(key netip.Prefix) {
 //   - After that, a request needs a Bearer token with enough scope, or the admin's HTTP Basic
 //     credentials. The last Basic header that passed is remembered, so UI polls skip PBKDF2.
 //
-// Writes sent from another site's page are refused, whatever credentials the browser adds.
+// No browser adds these credentials by itself: they come from a header the admin UI sets, never
+// a cookie, so another site's page cannot borrow them.
 func (rt *Router) auth(need string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if err := checkOrigin(r); err != nil {
-			http.Error(w, "cross-origin request refused", http.StatusForbidden)
-			return
-		}
 		snap := rt.cat.Current()
 		a := snap.Config.Auth
 
@@ -125,19 +111,22 @@ func (rt *Router) auth(need string, next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		if rt.remembered(a.Hash, h) {
+		// Backoff comes before the remembered header, or a blocked address could keep guessing
+		// against it for free.
+		key := clientKey(clientIP(r))
+		if d := rt.failures.wait(key, time.Now()); d > 0 {
+			w.Header().Set("Retry-After", strconv.Itoa(int(d.Seconds())+1))
+			http.Error(w, "too many wrong passwords from this address: retry later", http.StatusTooManyRequests)
+			return
+		}
+		// Keyed by the hash too, so a password change ends the remembered sign-in.
+		if s := rt.session.Load(); s != nil && subtle.ConstantTimeCompare([]byte(*s), []byte(a.Hash+h)) == 1 {
 			next(w, as(r, a.Username, "admin"))
 			return
 		}
 		user, pw, ok := r.BasicAuth()
 		if !ok {
 			http.Error(w, "sign in required", http.StatusUnauthorized)
-			return
-		}
-		key := clientKey(clientIP(r))
-		if d := rt.failures.wait(key, time.Now()); d > 0 {
-			w.Header().Set("Retry-After", strconv.Itoa(int(d.Seconds())+1))
-			http.Error(w, "too many wrong passwords from this address: retry later", http.StatusTooManyRequests)
 			return
 		}
 		select {
@@ -150,7 +139,7 @@ func (rt *Router) auth(need string, next http.HandlerFunc) http.HandlerFunc {
 		<-verifying
 		if good && subtle.ConstantTimeCompare([]byte(user), []byte(a.Username)) == 1 {
 			rt.failures.forget(key)
-			rt.session.Store(&session{hash: a.Hash, header: h})
+			rt.session.Store(new(a.Hash + h))
 			next(w, as(r, a.Username, "admin"))
 			return
 		}
@@ -158,12 +147,6 @@ func (rt *Router) auth(need string, next http.HandlerFunc) http.HandlerFunc {
 		rt.log.Warn("sign-in failed", "remote", key)
 		http.Error(w, "sign in required", http.StatusUnauthorized)
 	}
-}
-
-// remembered reports whether header is the Basic header that last passed for this password hash.
-func (rt *Router) remembered(hash, header string) bool {
-	s := rt.session.Load()
-	return s != nil && s.hash == hash && subtle.ConstantTimeCompare([]byte(s.header), []byte(header)) == 1
 }
 
 // as records who sent r and their scope.
@@ -187,11 +170,7 @@ func scope(r *http.Request) string {
 // clientKey is what sign-in failures are counted by: one IPv4 address, or one IPv6 /64, which
 // is what a single client usually gets.
 func clientKey(ip netip.Addr) netip.Prefix {
-	bits := 32
-	if ip.Is6() {
-		bits = 64
-	}
-	p, _ := ip.Prefix(bits)
+	p, _ := ip.Prefix(min(ip.BitLen(), 64))
 	return p
 }
 

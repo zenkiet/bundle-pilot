@@ -36,6 +36,7 @@
 		try {
 			// A revert keeps the live admin account: it never brings back an old password.
 			const c = await loadRevision(r.id);
+			if (picked?.id !== r.id) return; // another entry was picked meanwhile
 			c.auth = config.saved.auth && clone(AuthSchema, config.saved.auth);
 			next = c;
 		} catch (e) {
@@ -78,7 +79,7 @@
 		>
 	{/snippet}
 	{#if picked && next}
-		{#each changes as c (c.what + c.diff)}
+		{#each changes as c, i (i)}
 			<div class="item">
 				<div class="flex min-w-0 flex-1 flex-col">
 					<span class="font-medium">{c.what}</span><span class="desc mono">{c.diff}</span>

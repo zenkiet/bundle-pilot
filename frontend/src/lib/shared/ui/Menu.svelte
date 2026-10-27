@@ -13,27 +13,13 @@
 </script>
 
 <script lang="ts">
-	import type { Snippet } from 'svelte';
 	import { Ellipsis } from '@lucide/svelte';
 	import { clickOutside } from '#lib/shared/lib/actions.ts';
 	import { media } from '#lib/shared/lib/media.svelte.ts';
 	import Sheet from './Sheet.svelte';
 
-	let {
-		items,
-		title,
-		subtitle,
-		label = 'Actions',
-		align = 'right',
-		trigger
-	}: {
-		items: MenuItem[];
-		title?: string;
-		subtitle?: string;
-		label?: string;
-		align?: 'left' | 'right';
-		trigger?: Snippet;
-	} = $props();
+	let { items, title, subtitle }: { items: MenuItem[]; title?: string; subtitle?: string } =
+		$props();
 
 	let open = $state(false);
 	function pick(i: MenuItem) {
@@ -61,16 +47,16 @@
 <div class="relative flex-none" use:clickOutside={() => !media.compact && (open = false)}>
 	<button
 		type="button"
-		class={trigger ? 'contents' : 'btn btn-ghost btn-sm btn-icon'}
-		aria-label={label}
+		class="btn btn-ghost btn-sm btn-icon"
+		aria-label="Actions"
 		aria-haspopup="menu"
 		aria-expanded={open}
 		onclick={() => (open = !open)}
 	>
-		{#if trigger}{@render trigger()}{:else}<Ellipsis size={16} />{/if}
+		<Ellipsis size={16} />
 	</button>
 	{#if open && !media.compact}
-		<div class="popover menu top-full mt-1 {align === 'right' ? 'right-0' : 'left-0'}" role="menu">
+		<div class="popover menu top-full right-0 mt-1" role="menu">
 			{@render rows(false)}
 		</div>
 	{/if}

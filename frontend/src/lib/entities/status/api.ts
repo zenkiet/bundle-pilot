@@ -1,9 +1,8 @@
 import { getJSON } from '#lib/shared/lib/api.ts';
 
-export interface BundleInfo {
+interface BundleInfo {
 	version: string;
 	files: number;
-	bytes: number;
 	zip_bytes: number;
 	mod_time: string;
 	/** App versions it runs on, from its <meta name="bundle-pilot:native">. */

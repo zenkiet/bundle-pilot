@@ -3,8 +3,7 @@ package bundlefs
 import (
 	"errors"
 	"io/fs"
-	"os"
-	"path/filepath"
+	"path"
 	"slices"
 	"strings"
 	"time"
@@ -28,33 +27,26 @@ func (s *Source) record(old *configv1.Config, oldAt time.Time, pb *configv1.Conf
 	if old != nil && domain.ETag(old) == domain.ETag(pb) {
 		return nil
 	}
-	dir := filepath.Join(s.dir, historyDir)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	if err := s.root.MkdirAll(historyDir, 0o700); err != nil {
 		return err
 	}
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = root.Close() }()
 	ids, err := s.revisions()
 	if err == nil && len(ids) == 0 && old != nil {
-		if err := writeRevision(root, oldAt, "", old); err != nil {
+		if err := s.writeRevision(oldAt, "", old); err != nil {
 			return err
 		}
 	}
-	if err := writeRevision(root, time.Now(), by, pb); err != nil {
+	if err := s.writeRevision(time.Now(), by, pb); err != nil {
 		return err
 	}
 	ids, err = s.revisions()
-	extra := max(0, len(ids)-keepRevisions)
-	for _, id := range ids[:extra] { // oldest first
-		_ = root.Remove(id + ".pb")
+	for _, id := range ids[:max(0, len(ids)-keepRevisions)] { // oldest first
+		_ = s.root.Remove(path.Join(historyDir, id+".pb"))
 	}
 	return err
 }
 
-func writeRevision(root *os.Root, at time.Time, by string, pb *configv1.Config) error {
+func (s *Source) writeRevision(at time.Time, by string, pb *configv1.Config) error {
 	cfg, err := domain.EncodeConfig(domain.Redacted(pb))
 	if err != nil {
 		return err
@@ -63,20 +55,12 @@ func writeRevision(root *os.Root, at time.Time, by string, pb *configv1.Config) 
 	if err != nil {
 		return err
 	}
-	f, err := root.OpenFile(at.UTC().Format(revisionID)+".pb", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return err
-	}
-	_, err = f.Write(b)
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	return err
+	return s.root.WriteFile(path.Join(historyDir, at.UTC().Format(revisionID)+".pb"), b, 0o600)
 }
 
 // revisions lists the ids in DIST/history, oldest first.
 func (s *Source) revisions() ([]string, error) {
-	entries, err := fs.ReadDir(s.fsys, historyDir)
+	entries, err := fs.ReadDir(s.root.FS(), historyDir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
@@ -115,12 +99,7 @@ func (s *Source) readRevision(id string) (*configv1.Revision, error) {
 	if !validRevision(id) {
 		return nil, fs.ErrNotExist
 	}
-	root, err := os.OpenRoot(filepath.Join(s.dir, historyDir))
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = root.Close() }()
-	b, err := root.ReadFile(id + ".pb")
+	b, err := s.root.ReadFile(path.Join(historyDir, id+".pb"))
 	if err != nil {
 		return nil, err
 	}

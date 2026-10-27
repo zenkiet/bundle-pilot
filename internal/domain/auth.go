@@ -14,8 +14,8 @@ const pbkdf2Rounds = 600_000
 
 // Auth is the admin account; Hash comes from HashPassword.
 type Auth struct {
-	Username string `json:"username"`
-	Hash     string `json:"-"`
+	Username string
+	Hash     string
 }
 
 // HashPassword returns a salted hash: pbkdf2-sha256$<rounds>$<salt>$<key>.

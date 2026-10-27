@@ -19,11 +19,14 @@ export async function request(url: string, init: RequestInit = {}): Promise<Resp
 	return res;
 }
 
-export async function getJSON<T>(url: string): Promise<T> {
-	const res = await request(url);
-	if (!res.ok) throw new Error(`${url}: ${res.status}`);
-	return res.json();
+/** request, throwing the gateway's own message on an error status. */
+export async function send(url: string, init?: RequestInit): Promise<Response> {
+	const res = await request(url, init);
+	if (!res.ok) throw new Error((await res.text()).trim() || `${url}: ${res.status}`);
+	return res;
 }
+
+export const getJSON = <T>(url: string): Promise<T> => send(url).then((res) => res.json());
 
 export const mb = (bytes: number) => `${(bytes / 1048576).toFixed(1)} MB`;
 

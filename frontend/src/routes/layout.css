@@ -15,7 +15,6 @@
 	--neutral: #0000000f;
 	--overlay: #00000080;
 	--hover: #0000000d;
-	--pressed: #0000001a;
 	--fg: #000000;
 	--fg-2: #474747;
 	--fg-3: #919191;
@@ -40,9 +39,7 @@
 	--green-fg: #00490b;
 	--gray-bg: #e4e4e4;
 	--gray-fg: #262626;
-	--blue-bg: #d5e5fb;
 	--blue-fg: #0a3d7a;
-	--yellow-bg: #fbefc0;
 	--yellow-fg: #4b3900;
 	--red-bg: #fbe1de;
 	--red-fg: #76000c;
@@ -64,7 +61,6 @@
 	--neutral: #ffffff1a;
 	--overlay: #000000cc;
 	--hover: #ffffff0d;
-	--pressed: #ffffff1a;
 	--fg: #ffffff;
 	--fg-2: #9e9e9e;
 	--fg-3: #525252;
@@ -89,9 +85,7 @@
 	--green-fg: #a4d6a3;
 	--gray-bg: #3a3a3a;
 	--gray-fg: #e6e6e6;
-	--blue-bg: #173561;
 	--blue-fg: #a9c7f5;
-	--yellow-bg: #4a3a0a;
 	--yellow-fg: #f8d36a;
 	--red-bg: #5a1d17;
 	--red-fg: #ffc4be;
@@ -230,14 +224,6 @@
 		background: var(--green-bg);
 		color: var(--green-fg);
 	}
-	.badge-blue {
-		background: var(--blue-bg);
-		color: var(--blue-fg);
-	}
-	.badge-yellow {
-		background: var(--yellow-bg);
-		color: var(--yellow-fg);
-	}
 	.badge-red {
 		background: var(--red-bg);
 		color: var(--red-fg);
@@ -254,14 +240,6 @@
 		background: var(--green-bg);
 		color: var(--green-fg);
 	}
-	.token-red {
-		background: var(--red-bg);
-		color: var(--red-fg);
-	}
-	.token-yellow {
-		background: var(--yellow-bg);
-		color: var(--yellow-fg);
-	}
 
 	.dot {
 		@apply inline-block size-2 flex-none rounded-full bg-fg-2;
@@ -274,9 +252,6 @@
 	}
 	.dot-error {
 		background: var(--fill-error);
-	}
-	.dot-accent {
-		background: var(--fill-accent);
 	}
 
 	.kbd {
@@ -325,9 +300,6 @@
 	.selector-open .chev {
 		@apply rotate-180;
 	}
-	.selector-ghost {
-		@apply w-auto border-transparent bg-transparent px-2 font-medium;
-	}
 
 	.popover {
 		@apply absolute z-30 rounded-container border border-line bg-popover shadow-med;
@@ -365,9 +337,6 @@
 	}
 	.menu-divider {
 		@apply my-1 h-px bg-line;
-	}
-	.menu-heading {
-		@apply px-2 py-1 text-xs leading-4 text-fg-2 select-none;
 	}
 
 	.seg {
@@ -433,29 +402,6 @@
 
 	.card {
 		@apply relative flex min-w-0 flex-col gap-3 rounded-container border border-line bg-card p-4;
-	}
-	.card-tight {
-		@apply p-3;
-	}
-	.card-muted {
-		@apply border-transparent bg-muted;
-	}
-
-	.table {
-		@apply w-full border-collapse text-sm text-fg;
-	}
-	.table th {
-		@apply border-b border-line px-3 py-2 text-left text-sm font-semibold whitespace-nowrap text-fg-2;
-	}
-	.table td {
-		@apply border-b border-line px-3 py-2 align-middle;
-	}
-	.table tbody tr:last-child td {
-		@apply border-b-0;
-	}
-	.table-compact th,
-	.table-compact td {
-		@apply px-2 py-1;
 	}
 
 	.meta {
@@ -607,9 +553,6 @@
 		background: var(--fg-2) !important;
 	}
 
-	.spinner {
-		@apply size-4 flex-none animate-spin rounded-full border-2 border-neutral border-t-accent;
-	}
 	.empty {
 		@apply flex flex-col items-center justify-center gap-4 px-6 py-8 text-center;
 	}
@@ -618,9 +561,6 @@
 	}
 	.item {
 		@apply relative flex w-full items-center gap-2 rounded-element p-2 text-left;
-	}
-	.item-btn {
-		@apply cursor-pointer hover:bg-hover;
 	}
 
 	.dropzone {

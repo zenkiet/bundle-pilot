@@ -16,24 +16,8 @@ import (
 
 const maxFactsBody = 4 << 10
 
-var crossOrigin = http.NewCrossOriginProtection()
-
-// checkOrigin refuses a write sent from another site's page
-func checkOrigin(r *http.Request) error {
-	if host := r.Header.Get("X-Forwarded-Host"); host != "" {
-		proxied := *r
-		proxied.Host = host
-		r = &proxied
-	}
-	return crossOrigin.Check(r)
-}
-
-// data decides the bundle for the posted facts and applies it; X-Dry-Run only answers.
+// data decides the bundle for the posted facts and applies it.
 func (rt *Router) data(w http.ResponseWriter, r *http.Request) {
-	if err := checkOrigin(r); err != nil {
-		http.Error(w, "cross-origin request refused", http.StatusForbidden)
-		return
-	}
 	snap := rt.cat.Current()
 	if len(snap.Bundles()) == 0 {
 		http.Error(w, "no bundle deployed yet", http.StatusServiceUnavailable)
@@ -53,18 +37,13 @@ func (rt *Router) data(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	dry := r.Header.Get("X-Dry-Run") != ""
 	b, via, err := snap.Decide(facts, time.Now())
 	if err != nil {
-		if !dry {
-			rt.count("refused", "") // fail-closed answers stop OTA updates: keep them visible
-		}
+		rt.count("refused", "") // fail-closed answers stop OTA updates: keep them visible
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if !dry {
-		rt.apply(w, r, snap, b, via)
-	}
+	rt.apply(w, r, snap, b, via)
 	writeJSON(w, http.StatusOK, struct {
 		Bundle string `json:"bundle"`
 		Via    string `json:"via"`
@@ -119,11 +98,10 @@ func cookieFacts(r *http.Request) domain.Facts {
 type bundleStatus struct {
 	Version  string    `json:"version"`
 	Files    int       `json:"files"`
-	Bytes    int64     `json:"bytes"`
 	ZipBytes int64     `json:"zip_bytes"`
 	ModTime  time.Time `json:"mod_time"`
 	Native   string    `json:"native,omitempty"`
-	Blocked  bool      `json:"blocked,omitempty"`
+	Blocked  bool      `json:"blocked,omitzero"`
 }
 
 type syncStatus struct {
@@ -169,8 +147,6 @@ func (rt *Router) status(w http.ResponseWriter, _ *http.Request) {
 		Errors            []string          `json:"errors"`
 		Resident          uint64            `json:"resident_bytes"`
 		Bundles           []bundleStatus    `json:"bundles"`
-		Rules             []domain.Rule     `json:"rules"`
-		Backend           domain.Mapping    `json:"backend"`
 		Decisions         map[string]uint64 `json:"decisions"`
 		DecisionsByBundle map[string]uint64 `json:"decisions_by_bundle"`
 		Issues            []string          `json:"issues"`
@@ -191,8 +167,6 @@ func (rt *Router) status(w http.ResponseWriter, _ *http.Request) {
 		LastError:         lastErr,
 		Errors:            snap.Errors,
 		Resident:          resident(),
-		Rules:             snap.Config.Rules,
-		Backend:           snap.Config.Backend,
 		Decisions:         byVia,
 		DecisionsByBundle: byBundle,
 		Issues:            snap.Issues,
@@ -204,7 +178,6 @@ func (rt *Router) status(w http.ResponseWriter, _ *http.Request) {
 		out.Bundles = append(out.Bundles, bundleStatus{
 			Version:  b.Version,
 			Files:    b.Len(),
-			Bytes:    b.Bytes(),
 			ZipBytes: b.ZipBytes,
 			ModTime:  b.ModTime,
 			Native:   b.Native,

@@ -1,5 +1,5 @@
 import { create, fromBinary, toBinary, toJson } from '@bufbuild/protobuf';
-import { request } from '#lib/shared/lib/api.ts';
+import { request, send } from '#lib/shared/lib/api.ts';
 import { ConfigSchema, type Config } from './gen/bundlepilot/config/v1/config_pb';
 
 const url = '/__gateway/config';
@@ -13,8 +13,7 @@ export const stale = new Error(
 );
 
 export async function loadConfig(): Promise<{ config: Config; etag: string }> {
-	const res = await request(url, { headers: { Accept: protobuf } });
-	if (!res.ok) throw new Error(`config: ${res.status}`);
+	const res = await send(url, { headers: { Accept: protobuf } });
 	const config = fromBinary(ConfigSchema, new Uint8Array(await res.arrayBuffer()));
 	return { config, etag: res.headers.get('ETag') ?? '' };
 }
@@ -56,12 +55,11 @@ export interface Decision {
 
 /** Decides facts, JSON as an app posts them, under cfg as if it were saved. Nothing is recorded. */
 export async function decide(facts: string, cfg: Config): Promise<Decision> {
-	const res = await request('/__gateway/decide', {
+	const res = await send('/__gateway/decide', {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		// facts go in as typed, so big ids keep their digits
 		body: `{"facts":${facts},"config":${JSON.stringify(toJson(ConfigSchema, cfg))}}`
 	});
-	if (!res.ok) throw new Error((await res.text()).trim());
 	return res.json();
 }

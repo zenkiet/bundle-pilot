@@ -138,7 +138,7 @@
 	]);
 
 	function key(e: KeyboardEvent) {
-		if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+		if (!bare && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
 			e.preventDefault();
 			saveAll();
 		}
@@ -157,7 +157,7 @@
 	<AppShell onsearch={() => palette?.show()}>
 		{@render children()}
 	</AppShell>
+	<CommandPalette bind:this={palette} {commands} />
 {/if}
 
-<CommandPalette bind:this={palette} {commands} />
 <Toast />

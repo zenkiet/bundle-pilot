@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { create } from '@bufbuild/protobuf';
+	import { clone, create } from '@bufbuild/protobuf';
 	import { SourceSchema } from '#lib/entities/config/gen/bundlepilot/config/v1/config_pb.ts';
 	import { config } from '#lib/entities/config/store.svelte.ts';
 	import { status } from '#lib/entities/status/store.svelte.ts';
@@ -8,9 +8,16 @@
 
 	const type = $derived(config.draft.source?.type === 's3' ? 's3' : 'local');
 	const sync = $derived(status.value?.sync);
-	const setType = (t: string) =>
-		(config.draft.source =
-			t === 's3' ? create(SourceSchema, { type: 's3', region: 'auto', poll: '30s' }) : undefined);
+	function setType(t: string) {
+		if (t === type) return;
+		const saved = config.saved.source;
+		config.draft.source =
+			t === 'local'
+				? undefined
+				: saved?.type === 's3'
+					? clone(SourceSchema, saved)
+					: create(SourceSchema, { type: 's3', region: 'auto', poll: '30s' });
+	}
 	const fields = [
 		['bucket', 'Bucket', 'bundles'],
 		['prefix', 'Prefix', 'prod/'],

@@ -4,13 +4,14 @@
 	import { config } from '#lib/entities/config/store.svelte.ts';
 	import Card from '#lib/shared/ui/Card.svelte';
 
-	let user = $derived(config.saved.auth?.username ?? 'admin');
+	let user = $state(config.saved.auth?.username ?? 'admin');
 	let password = $state('');
 	let confirm = $state('');
 	const ok = $derived(password.length >= 8 && password === confirm);
-	// Once saved, the new password is in the hash: clear it so the draft does not set it again.
+	// A save, discard or reload starts the form over: a saved password is in the hash now.
 	$effect(() => {
-		void config.saved.auth;
+		void config.draft;
+		user = config.saved.auth?.username ?? 'admin';
 		password = confirm = '';
 	});
 	$effect(() => {

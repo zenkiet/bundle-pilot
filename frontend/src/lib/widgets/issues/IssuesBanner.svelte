@@ -4,7 +4,7 @@
 	import Banner from '#lib/shared/ui/Banner.svelte';
 
 	const errors = $derived([
-		...config.errors,
+		...(config.dirty ? config.errors : []),
 		...(status.value?.errors ?? []),
 		...(status.value?.last_error ? [status.value.last_error] : [])
 	]);

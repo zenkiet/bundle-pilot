@@ -1,7 +1,6 @@
 package main
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -24,36 +23,41 @@ import (
 )
 
 func main() {
+	cfg, err := env.Load(os.Getenv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "check":
-			os.Exit(check(os.Args[2:]))
+			os.Exit(check(cfg, os.Args[2:]))
 		case "import":
-			os.Exit(importConfig(os.Args[2:]))
+			os.Exit(importConfig(cfg, os.Args[2:]))
 		case "health":
-			os.Exit(health())
+			os.Exit(health(cfg))
 		}
 	}
-	var lvl slog.LevelVar
-	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: &lvl}))
-	if err := run(log, &lvl); err != nil {
+	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: cfg.LogLevel}))
+	if err := run(cfg, log); err != nil {
 		log.Error("exit", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(log *slog.Logger, lvl *slog.LevelVar) error {
-	cfg, err := env.Load(os.Getenv)
+func run(cfg env.Config, log *slog.Logger) error {
+	if err := os.MkdirAll(cfg.Dist, 0o755); err != nil {
+		return err
+	}
+	cat, err := catalog(cfg, log)
 	if err != nil {
 		return err
 	}
-	lvl.Set(cfg.LogLevel)
-	cat := catalog(cfg, log)
 	if err := cat.Reload(); err != nil {
 		return fmt.Errorf("load %s: %w", cfg.Dist, err)
 	}
 	if t := cat.Current().Setup; t != "" {
-		log.Warn("first-run setup: enter this token on /__gateway/ui/setup/", "token", t)
+		log.Error("first-run setup: enter this token on /__gateway/ui/setup/", "token", t) // no LOG_LEVEL hides Error
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -101,17 +105,15 @@ func run(log *slog.Logger, lvl *slog.LevelVar) error {
 }
 
 // check loads DIST the way the server does, prints every issue and exits 1 on any error.
-func check(args []string) int {
-	cfg, err := env.Load(os.Getenv)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "error:", err)
-		return 1
-	}
+func check(cfg env.Config, args []string) int {
 	if len(args) > 0 {
 		cfg.Dist = args[0]
 	}
-	cat := catalog(cfg, slog.New(slog.DiscardHandler))
-	if err := cat.Reload(); err != nil {
+	cat, err := catalog(cfg, slog.New(slog.DiscardHandler))
+	if err == nil {
+		err = cat.Reload()
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
@@ -131,19 +133,15 @@ func check(args []string) int {
 }
 
 // importConfig validates a JSON config and stores it as DIST/config.pb.
-func importConfig(args []string) int {
+func importConfig(cfg env.Config, args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: gateway import config.json [DIST]")
 		return 2
 	}
-	cfg, err := env.Load(os.Getenv)
-	if err == nil {
-		if len(args) > 1 {
-			cfg.Dist = args[1]
-		}
-		err = writeImported(args[0], cfg.Dist)
+	if len(args) > 1 {
+		cfg.Dist = args[1]
 	}
-	if err != nil {
+	if err := writeImported(args[0], cfg.Dist); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		return 1
 	}
@@ -162,7 +160,10 @@ func writeImported(file, dist string) error {
 	if err != nil {
 		return err
 	}
-	src := bundlefs.New(dist, slog.New(slog.NewTextHandler(os.Stderr, nil)), nil)
+	src, err := bundlefs.New(dist, slog.New(slog.NewTextHandler(os.Stderr, nil)), nil)
+	if err != nil {
+		return err
+	}
 	cur, err := src.ReadConfig()
 	if errors.Is(err, fs.ErrNotExist) {
 		cur, err = &configv1.Config{}, nil
@@ -179,8 +180,9 @@ func writeImported(file, dist string) error {
 }
 
 // health exits 0 while the local gateway reports healthy, for HEALTHCHECK in images without curl.
-func health() int {
-	res, err := http.Get("http://127.0.0.1:" + cmp.Or(os.Getenv("PORT"), "8080") + "/healthz")
+func health(cfg env.Config) int {
+	client := &http.Client{Timeout: 2 * time.Second}
+	res, err := client.Get("http://127.0.0.1" + cfg.Addr + "/healthz")
 	if err != nil {
 		return 1
 	}
@@ -191,6 +193,10 @@ func health() int {
 	return 0
 }
 
-func catalog(cfg env.Config, log *slog.Logger) *usecase.Catalog {
-	return usecase.NewCatalog(bundlefs.New(cfg.Dist, log, cfg.BundleKey), log)
+func catalog(cfg env.Config, log *slog.Logger) (*usecase.Catalog, error) {
+	src, err := bundlefs.New(cfg.Dist, log, cfg.BundleKey)
+	if err != nil {
+		return nil, err
+	}
+	return usecase.NewCatalog(src, log), nil
 }

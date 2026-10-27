@@ -58,8 +58,8 @@ class UploadQueue {
 		if (this.running) return;
 		this.running = true;
 		const uploaded: string[] = [];
-		for (const it of this.items) {
-			if (it.status !== 'queued') continue;
+		// the live list: files added or removed during the run count
+		for (let it; (it = this.items.find((i) => i.status === 'queued'));) {
 			it.status = 'uploading';
 			try {
 				const r = await uploadBundle(it.file, (p) => (it.pct = p));
@@ -83,7 +83,7 @@ class UploadQueue {
 			});
 			await status.refresh();
 		} else if (uploaded.length)
-			toast(`${this.verified} bundle${this.verified === 1 ? '' : 's'} verified and on disk`);
+			toast(`${uploaded.length} bundle${uploaded.length === 1 ? '' : 's'} verified and on disk`);
 		this.running = false;
 	}
 }

@@ -16,10 +16,10 @@ import (
 type Router struct {
 	cat      *usecase.Catalog
 	log      *slog.Logger
-	mu       sync.Mutex        // guards byVia and byBundle
-	byVia    map[string]uint64 // decisions by how they were made, plus "refused"
-	byBundle map[string]uint64 // decisions by the bundle chosen
-	session  atomic.Pointer[session]
+	mu       sync.Mutex             // guards byVia and byBundle
+	byVia    map[string]uint64      // decisions by how they were made, plus "refused"
+	byBundle map[string]uint64      // decisions by the bundle chosen
+	session  atomic.Pointer[string] // the password hash and Basic header that last passed
 	failures failures
 }
 

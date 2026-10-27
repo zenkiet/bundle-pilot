@@ -17,8 +17,8 @@
 			<span class="truncate font-medium">{n} unsaved change{n === 1 ? '' : 's'}</span>
 			<span class="sup"
 				>{config.errors.length
-					? `${config.errors.length} errors`
-					: `${config.issues.length} warnings`}</span
+					? `${config.errors.length} error${config.errors.length === 1 ? '' : 's'}`
+					: `${config.issues.length} warning${config.issues.length === 1 ? '' : 's'}`}</span
 			>
 		</div>
 		<ReviewChanges />

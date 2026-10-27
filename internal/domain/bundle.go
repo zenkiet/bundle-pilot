@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"path"
 	"slices"
@@ -14,11 +15,12 @@ import (
 	"github.com/zenkiet/bundle-pilot/internal/pkg/version"
 )
 
-var ErrNoIndex = errors.New("index.html missing")
+var ErrNoIndex = errors.New("index.html missing at the root of the zip: zip the build folder's contents, not the folder")
 
 // Bundle is one loaded build of the app, its files served in place from its zip.
 type Bundle struct {
 	Version  string
+	Zip      io.ReaderAt // the zip as loaded, for downloads
 	ZipBytes int64
 	ModTime  time.Time
 	Link     string // a Link header that preloads the page's main scripts and styles
@@ -34,9 +36,6 @@ type Bundle struct {
 // files keeps the raw page for OTA downloads. native limits the native app versions the bundle
 // runs on, such as ">=4.102.0"; empty means any.
 func NewBundle(ver, baseHref, native string, files map[string]*asset.Asset, index *asset.Asset) (*Bundle, error) {
-	if files["/index.html"] == nil {
-		return nil, ErrNoIndex
-	}
 	b := &Bundle{
 		Version: ver,
 		Native:  strings.TrimSpace(native),
@@ -65,14 +64,6 @@ func (b *Bundle) runs(native string) bool {
 	return version.Default.Kind(native) == version.Dotted && allHold(b.native, version.Default, native)
 }
 
-func (b *Bundle) Bytes() int64 {
-	var n int64
-	for _, a := range b.files {
-		n += a.Size()
-	}
-	return n
-}
-
 func (b *Bundle) Tag() []string { return b.tag }
 
 func (b *Bundle) Index() *asset.Asset { return b.index }
@@ -94,7 +85,7 @@ type Inventory struct {
 	Setup   string // the first-run token while config.pb is missing
 }
 
-// owned is a content-hashed file and the bundle it came from.
+// owned is a file and the bundle it came from.
 type owned struct {
 	asset  *asset.Asset
 	bundle *Bundle
@@ -113,13 +104,13 @@ type Snapshot struct {
 	Setup       string
 	bundles     map[string]*Bundle // the bundles that serve, by version
 	order       []*Bundle          // every loaded bundle, blocked ones included, newest first
-	hashed      map[string]owned
+	fallback    map[string]owned   // every bundle's files but pages and ngsw.json, newest owner
 }
 
 // NewSnapshot applies the config to the bundles. prevDefault is the version served so far; it
 // stays the default when the config names one that is not on disk. The default's <base href>
-// becomes the mount path. A blocked bundle stays listed and its hashed files still load for
-// pages already open, but nothing routes to it.
+// becomes the mount path. A blocked bundle stays listed and its files still load for pages
+// already open, but nothing routes to it.
 func NewSnapshot(inv Inventory, now time.Time, prevDefault string) *Snapshot {
 	s := &Snapshot{
 		Config:   inv.Config,
@@ -130,7 +121,7 @@ func NewSnapshot(inv Inventory, now time.Time, prevDefault string) *Snapshot {
 		Setup:    inv.Setup,
 		bundles:  make(map[string]*Bundle, len(inv.Bundles)),
 		order:    slices.Clone(inv.Bundles),
-		hashed:   map[string]owned{},
+		fallback: map[string]owned{},
 	}
 	s.Config.Rules = slices.Clone(inv.Config.Rules)
 	slices.SortFunc(s.order, func(a, b *Bundle) int {
@@ -141,11 +132,13 @@ func NewSnapshot(inv Inventory, now time.Time, prevDefault string) *Snapshot {
 			s.bundles[b.Version] = b
 		}
 	}
-	// Oldest first, so a file name in several bundles belongs to the newest.
+	// Oldest first, so a file name in several bundles belongs to the newest. Pages stay with
+	// their bundle so a removed one never comes back, and so does ngsw.json, whose 404 retires
+	// Angular's service worker.
 	for _, b := range slices.Backward(s.order) {
 		for rel, a := range b.files {
-			if a.Immutable() {
-				s.hashed[rel] = owned{a, b}
+			if path.Ext(rel) != ".html" && rel != "/ngsw.json" {
+				s.fallback[rel] = owned{a, b}
 			}
 		}
 	}
@@ -169,7 +162,10 @@ func NewSnapshot(inv Inventory, now time.Time, prevDefault string) *Snapshot {
 		default:
 			r.Active = true
 		}
-		if first, dup := keys[r.key]; dup && r.key != "" {
+		if !r.Active {
+			continue // an inactive rule shadows nothing
+		}
+		if first, dup := keys[r.key]; dup {
 			s.Issues = append(s.Issues, fmt.Sprintf("rule %s: same conditions as rule %s, never matches", r.ID, first))
 		}
 		keys[r.key] = r.ID
@@ -240,8 +236,8 @@ func (s *Snapshot) Pick(query, cookie string) (picked, current *Bundle) {
 	return current, current
 }
 
-// Lookup finds rel in b, falling back to content-hashed files of any bundle so
-// sessions opened before a switch keep loading their chunks.
+// Lookup finds rel in b, falling back to the newest bundle that has it (pages and ngsw.json
+// excepted), so sessions opened before a switch keep loading their chunks.
 func (s *Snapshot) Lookup(b *Bundle, rel string) (*asset.Asset, *Bundle) {
 	if rel == "/index.html" {
 		return b.index, b
@@ -249,7 +245,7 @@ func (s *Snapshot) Lookup(b *Bundle, rel string) (*asset.Asset, *Bundle) {
 	if a := b.files[rel]; a != nil {
 		return a, b
 	}
-	if o, ok := s.hashed[rel]; ok {
+	if o, ok := s.fallback[rel]; ok {
 		return o.asset, o.bundle
 	}
 	return nil, nil

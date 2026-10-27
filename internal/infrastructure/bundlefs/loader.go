@@ -21,7 +21,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/andybalholm/brotli"
 	"golang.org/x/net/html"
 
 	"github.com/zenkiet/bundle-pilot/internal/domain"
@@ -32,6 +31,7 @@ const (
 	manifestFile  = "/bundle.sha256"
 	signatureFile = "/bundle.sha256.sig"
 	maxKept       = 8 << 20
+	maxFiles      = 1 << 16
 )
 
 var (
@@ -43,26 +43,21 @@ var (
 	textual = map[string]bool{
 		".js": true, ".mjs": true, ".css": true, ".html": true, ".json": true, ".svg": true, ".txt": true,
 	}
+	errTooMany = fmt.Errorf("more than %d files", maxFiles)
 )
 
-// zipped is a loaded bundle, the open zip it serves from, and that zip's state at load.
+// zipped is a loaded bundle, the open zip it serves from, and that file's fingerprint when it
+// was loaded.
 type zipped struct {
 	bundle *domain.Bundle
 	f      *os.File
-	info   fs.FileInfo
+	fp     [2]int64
 	issues []string
-}
-
-// intact reports whether the zip is unchanged since it was opened. A rename or a delete leaves
-// the open file as it was; a write in place would serve wrong bytes.
-func (z zipped) intact() bool {
-	info, err := z.f.Stat()
-	return err == nil && info.Size() == z.info.Size() && info.ModTime().Equal(z.info.ModTime())
 }
 
 // loadBundles loads the zips in parallel. A loaded zip stays open, owned by its bundle, and
 // closes when its last snapshot is garbage collected.
-func loadBundles(fsys fs.FS, pub ed25519.PublicKey, zips []zipFile) ([]zipped, []error) {
+func loadBundles(root *os.Root, pub ed25519.PublicKey, zips []zipFile) ([]zipped, []error) {
 	out, errs := make([]zipped, len(zips)), make([]error, len(zips))
 	slots := make(chan struct{}, runtime.GOMAXPROCS(0))
 	var wg sync.WaitGroup
@@ -70,20 +65,14 @@ func loadBundles(fsys fs.FS, pub ed25519.PublicKey, zips []zipFile) ([]zipped, [
 		wg.Go(func() {
 			slots <- struct{}{}
 			defer func() { <-slots }()
-			f, err := fsys.Open(file.path)
+			f, err := root.Open(path.Join(versionsDir, file.name+".zip"))
 			if err != nil {
 				errs[i] = err
 				return
 			}
-			osf, ok := f.(*os.File)
-			if !ok {
-				_ = f.Close()
-				errs[i] = errors.New("zips must be files on disk")
-				return
-			}
-			out[i], errs[i] = loadZip(osf, pub, file.name)
+			out[i], errs[i] = loadZip(f, pub, file.name)
 			if errs[i] != nil {
-				_ = osf.Close()
+				_ = f.Close()
 			}
 		})
 	}
@@ -99,9 +88,14 @@ func loadZip(f *os.File, pub ed25519.PublicKey, name string) (zipped, error) {
 	if err != nil {
 		return zipped{}, err
 	}
-	zr, err := zip.NewReader(f, info.Size())
+	// archive/zip keeps about 200 bytes for each entry it lists, before maxFiles can be checked,
+	// so it reads at most 16 MiB: a 256 MiB zip of empty entries would otherwise take 600 MiB.
+	zr, err := zip.NewReader(&capped{ReaderAt: f, left: maxFiles * 256}, info.Size())
 	if err != nil {
 		return zipped{}, err
+	}
+	if len(zr.File) > maxFiles {
+		return zipped{}, errTooMany
 	}
 	files, err := scan(f, zr, info.Size())
 	if err != nil {
@@ -116,9 +110,8 @@ func loadZip(f *os.File, pub ed25519.PublicKey, name string) (zipped, error) {
 			return zipped{}, err
 		}
 	}
-	z := zipped{f: f, info: info}
+	z := zipped{f: f, fp: fingerprint(info)}
 	assets := make(map[string]*asset.Asset, len(files))
-	dec := brotli.NewReader(nil) // reused: a fresh decoder per sidecar doubles the garbage
 	bare := 0
 	for rel, s := range files {
 		if base, ok := strings.CutSuffix(rel, ".br"); ok && files[base] != nil {
@@ -126,12 +119,7 @@ func loadZip(f *os.File, pub ed25519.PublicKey, name string) (zipped, error) {
 		}
 		var br *asset.Span
 		if side := files[rel+".br"]; side != nil {
-			if sum, err := decodedSum(dec, f, side, s.Size); err == nil && sum == s.sum {
-				br = &side.Span
-			} else {
-				z.issues = append(z.issues,
-					fmt.Sprintf("bundle %s: %s.br does not decode to %[2]s, ignored", name, rel[1:]))
-			}
+			br = &side.Span
 		}
 		if br == nil && textual[path.Ext(rel)] && s.Size > 1<<10 && rel != "/index.html" {
 			bare++
@@ -145,16 +133,31 @@ func loadZip(f *os.File, pub ed25519.PublicKey, name string) (zipped, error) {
 	if ngsw := files["/ngsw.json"]; ngsw != nil {
 		assets["/ngsw.json"] = asset.New("/ngsw.json", ngsw.body, gzipped(ngsw.body))
 	}
-	base, link, native := indexMeta(index.body)
-	z.bundle, err = domain.NewBundle(name, base, native, assets, stamp(index.body, name))
+	base, link, native, head := indexMeta(index.body)
+	if head == 0 {
+		z.issues = append(z.issues,
+			fmt.Sprintf("bundle %s: index.html has no <head>, so it carries no version and the SDK never switches it", name))
+	}
+	z.bundle, err = domain.NewBundle(name, base, native, assets, stamp(index.body, name, head))
 	if err != nil {
 		return zipped{}, err
 	}
-	z.bundle.ZipBytes, z.bundle.ModTime, z.bundle.Link = info.Size(), info.ModTime(), link
-	if !z.intact() {
-		return zipped{}, errChanged
-	}
+	z.bundle.Zip, z.bundle.ZipBytes, z.bundle.ModTime, z.bundle.Link = f, info.Size(), info.ModTime(), link
 	return z, nil
+}
+
+// capped fails reads once left bytes have been read.
+type capped struct {
+	io.ReaderAt
+	left int64
+}
+
+func (c *capped) ReadAt(p []byte, off int64) (int, error) {
+	c.left -= int64(len(p))
+	if c.left < 0 {
+		return 0, errTooMany
+	}
+	return c.ReaderAt.ReadAt(p, off)
 }
 
 // scanned is a zip entry checked at load.
@@ -167,13 +170,13 @@ type scanned struct {
 
 // scan reads every entry once and refuses what cannot be served in place safely: compression
 // other than stored or deflate, encryption, symlinks, duplicates, entries outside the file and
-// zip bombs. Directories and hidden files are skipped.
+// zip bombs. Directories and dot files are skipped, except under /.well-known/ (app links).
 func scan(f *os.File, zr *zip.Reader, size int64) (map[string]*scanned, error) {
 	files := make(map[string]*scanned, len(zr.File))
 	var total uint64
 	for _, zf := range zr.File {
 		rel := path.Clean("/" + zf.Name)
-		if strings.HasSuffix(zf.Name, "/") || strings.Contains(rel, "/.") {
+		if strings.HasSuffix(zf.Name, "/") || strings.Contains("/"+strings.TrimPrefix(rel, "/.well-known/"), "/.") {
 			continue
 		}
 		off, err := zf.DataOffset()
@@ -207,8 +210,8 @@ func (s *scanned) read(ra io.ReaderAt, keep bool) error {
 	if keep && s.Size > maxKept {
 		return fmt.Errorf("larger than %d MiB", maxKept>>20)
 	}
-	in := &counter{r: io.NewSectionReader(ra, s.Off, s.Raw)}
-	buf := bufio.NewReader(in)
+	span := io.NewSectionReader(ra, s.Off, s.Raw)
+	buf := bufio.NewReader(span)
 	var r io.Reader = buf
 	if s.Deflate {
 		r = flate.NewReader(buf)
@@ -227,33 +230,10 @@ func (s *scanned) read(ra io.ReaderAt, keep bool) error {
 		return errors.New("checksum mismatch, the zip is damaged")
 	}
 	s.sum, s.head, s.body = [32]byte(sum.Sum(nil)), *head, body.Bytes()
-	consumed := in.n - int64(buf.Buffered()) // bytes the inflater took from the span
+	read, _ := span.Seek(0, io.SeekCurrent)
+	consumed := read - int64(buf.Buffered()) // bytes the inflater took from the span
 	s.Framable = s.Deflate && consumed == s.Raw
 	return nil
-}
-
-// decodedSum hashes a .br sidecar once decompressed, so it pairs only with the file it encodes.
-func decodedSum(dec *brotli.Reader, ra io.ReaderAt, s *scanned, limit int64) ([32]byte, error) {
-	r := s.Open(ra)
-	defer func() { _ = r.Close() }()
-	if err := dec.Reset(r); err != nil {
-		return [32]byte{}, err
-	}
-	h := sha256.New()
-	_, err := io.Copy(h, io.LimitReader(dec, limit+1))
-	return [32]byte(h.Sum(nil)), err
-}
-
-// counter counts the bytes read through it.
-type counter struct {
-	r io.Reader
-	n int64
-}
-
-func (c *counter) Read(p []byte) (int, error) {
-	n, err := c.r.Read(p)
-	c.n += int64(n)
-	return n, err
 }
 
 // prefix keeps the first 512 bytes written, enough to sniff a content type.
@@ -291,8 +271,7 @@ func verify(pub ed25519.PublicKey, files map[string]*scanned) error {
 		if err != nil || len(want) != sha256.Size || name == "" {
 			return fmt.Errorf("bundle.sha256: bad line %q", line)
 		}
-		name = strings.TrimPrefix(strings.TrimLeft(name, " *"), "./") // "<hash>  ./x" or "<hash> *x"
-		rel := path.Clean("/" + name)
+		rel := path.Clean("/" + strings.TrimLeft(name, " *")) // "<hash>  ./x" or "<hash> *x"
 		s := files[rel]
 		switch {
 		case s == nil:
@@ -310,16 +289,14 @@ func verify(pub ed25519.PublicKey, files map[string]*scanned) error {
 	return nil
 }
 
-// stamp adds <meta name="bundle-pilot:bundle" content="<version>"> to <head>, so the app knows
-// its version. The zip keeps the raw page, which OTA manifests hash. Only gzip: the page
-// revalidates, so brotli would save about 2.5 KB once per release.
-func stamp(index []byte, version string) *asset.Asset {
-	meta := []byte(`<meta name="bundle-pilot:bundle" content="` + html.EscapeString(version) + `">`)
-	if i := bytes.Index(index, []byte("<head")); i >= 0 {
-		if n := bytes.IndexByte(index[i:], '>'); n >= 0 {
-			i += n + 1 // just after <head ...>
-			index = slices.Concat(index[:i], meta, index[i:])
-		}
+// stamp adds <meta name="bundle-pilot:bundle" content="<version>"> at head, the offset just
+// after <head> (0 when there is none), so the app knows its version. The zip keeps the raw
+// page, which OTA manifests hash. Only gzip: the page revalidates, so brotli would save about
+// 2.5 KB once per release.
+func stamp(index []byte, version string, head int) *asset.Asset {
+	if head > 0 {
+		meta := []byte(`<meta name="bundle-pilot:bundle" content="` + html.EscapeString(version) + `">`)
+		index = slices.Concat(index[:head], meta, index[head:])
 	}
 	return asset.New("/index.html", index, gzipped(index))
 }
@@ -332,21 +309,26 @@ func gzipped(b []byte) []byte {
 	return buf.Bytes()
 }
 
-// indexMeta reads <base href> ("/" without one), the app versions the bundle runs on and a
-// Link header preloading up to 12 module scripts, modulepreloads and stylesheets.
-func indexMeta(index []byte) (base, link, native string) {
+// indexMeta reads <base href> ("/" without one), the app versions the bundle runs on, a
+// Link header preloading up to 12 module scripts, modulepreloads and stylesheets, and the
+// offset just after the <head> tag (0 without one).
+func indexMeta(index []byte) (base, link, native string, head int) {
 	base = "/"
 	var links []string
 	z := html.NewTokenizer(bytes.NewReader(index))
-	for {
+	for off := 0; ; {
 		tt := z.Next()
 		if tt == html.ErrorToken {
 			break
 		}
+		off += len(z.Raw()) // tokens are contiguous, so this is the end of the current one
 		if tt != html.StartTagToken && tt != html.SelfClosingTagToken {
 			continue
 		}
 		name, hasAttr := z.TagName()
+		if head == 0 && string(name) == "head" { // lower-cased; never <header> or a comment
+			head = off
+		}
 		if !hasAttr {
 			continue
 		}
@@ -370,7 +352,11 @@ func indexMeta(index []byte) (base, link, native string) {
 			case "modulepreload":
 				links = append(links, attr["href"]+">; rel=modulepreload")
 			case "stylesheet":
-				links = append(links, attr["href"]+">; rel=preload; as=style")
+				l := attr["href"] + ">; rel=preload; as=style"
+				if _, ok := attr["crossorigin"]; ok {
+					l += "; crossorigin" // a preload in another CORS mode is fetched again, not reused
+				}
+				links = append(links, l)
 			}
 		case "script":
 			if attr["type"] == "module" && attr["src"] != "" {
@@ -385,5 +371,5 @@ func indexMeta(index []byte) (base, link, native string) {
 		}
 		links[i] = "<" + l
 	}
-	return base, strings.Join(links, ", "), native
+	return base, strings.Join(links, ", "), native, head
 }

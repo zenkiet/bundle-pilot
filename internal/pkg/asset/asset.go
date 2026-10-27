@@ -31,7 +31,7 @@ var (
 // variant is one encoding of an asset, read from memory or from a span of an open zip.
 type variant struct {
 	size int64
-	open func() io.ReadSeekCloser
+	open func() io.ReadSeeker
 	etag []string
 	enc  []string
 }
@@ -53,15 +53,15 @@ type Asset struct {
 func FromZip(name string, ra io.ReaderAt, f Span, sum [32]byte, head []byte, br *Span) *Asset {
 	a := newAsset(name, head)
 	tag := `"` + hex.EncodeToString(sum[:8])
-	a.set(identity, tag, f.Size, func() io.ReadSeekCloser { return f.Open(ra) })
+	a.set(identity, tag, f.Size, func() io.ReadSeeker { return f.Open(ra) })
 	a.noRange = f.Deflate && f.Size > 1<<20 // a range would inflate everything before it
 	best := f.Size
 	if f.Framable && f.Raw+frameLen < best {
 		best = f.Raw + frameLen
-		a.set(gzipped, tag, best, func() io.ReadSeekCloser { return frame(ra, f) })
+		a.set(gzipped, tag, best, func() io.ReadSeeker { return frame(ra, f) })
 	}
 	if br != nil && br.Size < best {
-		a.set(brotli, tag, br.Size, func() io.ReadSeekCloser { return br.Open(ra) })
+		a.set(brotli, tag, br.Size, func() io.ReadSeeker { return br.Open(ra) })
 	}
 	return a
 }
@@ -72,9 +72,9 @@ func New(name string, body, gz []byte) *Asset {
 	sum := sha256.Sum256(body)
 	tag := `"` + hex.EncodeToString(sum[:8])
 	a.body = body
-	a.set(identity, tag, int64(len(body)), func() io.ReadSeekCloser { return nopCloser{bytes.NewReader(body)} })
+	a.set(identity, tag, int64(len(body)), func() io.ReadSeeker { return bytes.NewReader(body) })
 	if len(gz) > 0 && len(gz) < len(body) {
-		a.set(gzipped, tag, int64(len(gz)), func() io.ReadSeekCloser { return nopCloser{bytes.NewReader(gz)} })
+		a.set(gzipped, tag, int64(len(gz)), func() io.ReadSeeker { return bytes.NewReader(gz) })
 	}
 	return a
 }
@@ -87,7 +87,7 @@ func newAsset(name string, head []byte) *Asset {
 	return a
 }
 
-func (a *Asset) set(e encoding, tag string, size int64, open func() io.ReadSeekCloser) {
+func (a *Asset) set(e encoding, tag string, size int64, open func() io.ReadSeeker) {
 	a.v[e] = variant{size: size, open: open, etag: []string{tag + etagSuffix[e]}, enc: encodings[e]}
 }
 
@@ -110,6 +110,9 @@ func init() {
 }
 
 func contentType(name string, head []byte) string {
+	if path.Base(name) == "apple-app-site-association" { // JSON without an extension
+		return "application/json"
+	}
 	if ct := mime.TypeByExtension(path.Ext(name)); ct != "" {
 		return ct
 	}
@@ -118,7 +121,8 @@ func contentType(name string, head []byte) string {
 
 // hashed reports whether name carries a content hash, so it can be cached for good: anything
 // under /immutable/, or a name ending in a hash token, such as main-ABCD1234.js. A token is
-// 8 characters of upper-case letters, or of letters mixed with digits, or 16+ hex digits.
+// 8 characters of upper-case letters, or of letters mixed with digits, after a - or .; or
+// 16+ hex digits, which may also be the whole name (c39c7e86….png).
 func hashed(name string) bool {
 	if strings.Contains(name, "/immutable/") {
 		return true
@@ -130,9 +134,6 @@ func hashed(name string) bool {
 	}
 	stem := strings.TrimSuffix(base, ext)
 	i := strings.LastIndexAny(stem, "-.")
-	if i < 0 {
-		return false
-	}
 	tok := stem[i+1:]
 	digit, upper, lower, hexOnly := false, false, false, true
 	for _, c := range tok {
@@ -154,7 +155,7 @@ func hashed(name string) bool {
 	switch {
 	case len(tok) >= 16:
 		return hexOnly
-	case len(tok) == 8:
+	case len(tok) == 8 && i >= 0:
 		return (upper && !lower) || (digit && (upper || lower))
 	}
 	return false

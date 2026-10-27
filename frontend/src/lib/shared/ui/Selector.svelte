@@ -20,7 +20,6 @@
 		placeholder = 'Choose',
 		size = 'md',
 		mono = false,
-		ghost = false,
 		onchange
 	}: {
 		value?: T;
@@ -29,7 +28,6 @@
 		placeholder?: string;
 		size?: 'sm' | 'md' | 'lg';
 		mono?: boolean;
-		ghost?: boolean;
 		onchange?: (v: T) => void;
 	} = $props();
 
@@ -73,9 +71,7 @@
 >
 	<button
 		type="button"
-		class="input selector input-{size} {open ? 'selector-open input-focus' : ''} {ghost
-			? 'selector-ghost'
-			: ''}"
+		class="input selector input-{size} {open ? 'selector-open input-focus' : ''}"
 		aria-haspopup="listbox"
 		aria-expanded={open}
 		aria-label={title}

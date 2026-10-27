@@ -9,7 +9,6 @@ import (
 
 	"github.com/zenkiet/bundle-pilot/internal/domain"
 	"github.com/zenkiet/bundle-pilot/internal/gen/configv1"
-	"github.com/zenkiet/bundle-pilot/internal/usecase"
 )
 
 var errNoToken = errors.New("no such token")
@@ -46,7 +45,7 @@ func (rt *Router) createToken(w http.ResponseWriter, r *http.Request) {
 		cur.Tokens = append(cur.Tokens, token)
 		return cur, nil
 	})
-	if err != nil && !errors.Is(err, usecase.ErrNotApplied) {
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
@@ -71,7 +70,7 @@ func (rt *Router) deleteToken(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, errNoToken):
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
-	case err != nil && !errors.Is(err, usecase.ErrNotApplied):
+	case err != nil:
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}

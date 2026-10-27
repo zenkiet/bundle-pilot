@@ -1,3 +1,4 @@
+import { message } from '#lib/shared/lib/api.ts';
 import { loadStatus, type Status } from './api.ts';
 
 class StatusStore {
@@ -9,7 +10,7 @@ class StatusStore {
 			this.value = await loadStatus();
 			this.error = '';
 		} catch (e) {
-			this.error = e instanceof Error ? e.message : String(e);
+			this.error = message(e);
 		}
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -51,19 +52,18 @@ func (l Layout) Kind(s string) Kind {
 }
 
 // canon adds the v prefix semver wants; bundles are named without it.
-func canon(s string) string {
-	if strings.HasPrefix(s, "v") {
-		return s
-	}
-	return "v" + s
-}
+func canon(s string) string { return "v" + strings.TrimPrefix(s, "v") }
 
 // Layout is a date format written with YYYY, MM or M, dd or d (DD and yyyy
 // also work), separated by . - or /, kept as the time.Parse layout it maps to.
 type Layout struct {
 	name   string
 	layout string
+	shape  *regexp.Regexp // the digits and separators a date in the layout starts with
 }
+
+// shapes turns a layout from ParseLayout into a regexp; 2006 is listed before 2 so it wins.
+var shapes = strings.NewReplacer("2006", `\d{4}`, "01", `\d\d`, "02", `\d\d`, "1", `\d\d?`, "2", `\d\d?`, ".", `\.`)
 
 // part is one element of a date format.
 type part struct {
@@ -109,6 +109,7 @@ func ParseLayout(s string) (Layout, error) {
 	if seen != [3]bool{true, true, true} {
 		return l, errors.New("needs a year (YYYY), a month (MM or M) and a day (dd or d)")
 	}
+	l.shape = regexp.MustCompile("^" + shapes.Replace(l.layout)) // a prefix, so 12.31.2026-rc.1 is a bad date
 	return l, nil
 }
 
@@ -126,16 +127,16 @@ func (l Layout) Date(s string) int {
 	return d
 }
 
-// date is Date, plus whether s has the layout's shape even when the day does not exist,
-// such as 02.30.2026: time.Parse then fails with a range message, not on an element.
+// date is Date, plus whether s is shaped like a date in l even when it is none, such as
+// 02.30.2026 or 25.10.2026. 13.0.0 is not, so it stays a version: time.Parse alone would
+// reject its month before reading the rest.
 func (l Layout) date(s string) (int, bool) {
-	if l.layout == "" {
+	if l.shape == nil || !l.shape.MatchString(s) {
 		return 0, false
 	}
 	t, err := time.Parse(l.layout, s)
-	if err == nil {
-		return t.Year()*10000 + int(t.Month())*100 + t.Day(), true
+	if err != nil {
+		return 0, true
 	}
-	var pe *time.ParseError
-	return 0, errors.As(err, &pe) && pe.Message != ""
+	return t.Year()*10000 + int(t.Month())*100 + t.Day(), true
 }

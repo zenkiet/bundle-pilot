@@ -6,7 +6,6 @@
 	import { diff } from './diff.ts';
 	import { saveAll } from './save.ts';
 
-	let { size = 'md' }: { size?: 'sm' | 'md' } = $props();
 	let open = $state(false);
 	const changes = $derived(diff(config.saved, config.draft));
 	const summary = $derived(
@@ -28,7 +27,7 @@
 
 {#snippet body()}
 	<div class="flex flex-col p-1">
-		{#each changes as c (c.what + c.diff)}
+		{#each changes as c, i (i)}
 			<div class="item">
 				<div class="flex min-w-0 flex-1 flex-col">
 					<span class="font-medium">{c.what}</span><span class="desc mono">{c.diff}</span>
@@ -57,11 +56,7 @@
 {/snippet}
 
 <div class="relative" use:clickOutside={() => !media.compact && (open = false)}>
-	<button
-		class="btn btn-primary btn-{size}"
-		onclick={() => (open = !open)}
-		disabled={!config.dirty}
-	>
+	<button class="btn btn-primary" onclick={() => (open = !open)} disabled={!config.dirty}>
 		Review{#if changes.length}<span class="badge badge-tint">{changes.length}</span>{/if}
 	</button>
 	{#if open && !media.compact}

@@ -5,7 +5,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"io"
-	"io/fs"
 	"mime"
 	"net/http"
 	"strings"
@@ -15,7 +14,6 @@ import (
 
 	"github.com/zenkiet/bundle-pilot/internal/domain"
 	"github.com/zenkiet/bundle-pilot/internal/gen/configv1"
-	"github.com/zenkiet/bundle-pilot/internal/usecase"
 )
 
 const (
@@ -28,9 +26,6 @@ var errStale = errors.New("config changed since it was read: reload it")
 // getConfig serves config.pb as clients see it, with the ETag a PUT sends back as If-Match.
 func (rt *Router) getConfig(w http.ResponseWriter, r *http.Request) {
 	pb, err := rt.cat.Config()
-	if errors.Is(err, fs.ErrNotExist) {
-		pb, err = &configv1.Config{}, nil
-	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -53,11 +48,19 @@ func writeConfig(w http.ResponseWriter, r *http.Request, pb *configv1.Config) {
 	_, _ = w.Write(b)
 }
 
-// draft is the loaded bundles under config c: what saving c would serve.
-func (rt *Router) draft(c domain.Config) *domain.Snapshot {
+// preview is what saving pb would serve: pb on top of the stored config, under the loaded bundles.
+func (rt *Router) preview(pb *configv1.Config) (*domain.Snapshot, error) {
+	cur, err := rt.cat.Config()
+	if err != nil {
+		return nil, err
+	}
+	domain.KeepStored(pb, cur)
+	c, err := domain.ParseConfig(pb)
+	if err != nil {
+		return nil, err
+	}
 	snap := rt.cat.Current()
-	inv := domain.Inventory{Bundles: snap.Bundles(), Config: c}
-	return domain.NewSnapshot(inv, time.Now(), snap.Default.Version)
+	return domain.NewSnapshot(domain.Inventory{Bundles: snap.Bundles(), Config: c}, time.Now(), snap.Default.Version), nil
 }
 
 // putConfig validates the posted config against the loaded bundles and saves it, unless
@@ -75,57 +78,40 @@ func (rt *Router) putConfig(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	out := struct {
+	var out struct {
 		Saved  bool     `json:"saved"`
 		Errors []string `json:"errors"`
 		Issues []string `json:"issues"`
-	}{}
-	// check validates pb on top of the stored config, and collects its warnings.
-	check := func(cur *configv1.Config) error {
-		domain.KeepStored(pb, cur)
-		c, err := domain.ParseConfig(pb)
-		if err == nil {
-			out.Issues = rt.draft(c).Issues
-		}
-		return err
 	}
+	var snap *domain.Snapshot // what serves, or would, under pb
 	if r.Header.Get("X-Dry-Run") != "" {
-		cur, err := rt.cat.Config()
-		if errors.Is(err, fs.ErrNotExist) {
-			cur, err = &configv1.Config{}, nil
-		}
-		if err == nil {
-			err = check(cur)
-		}
-		if err != nil {
-			out.Errors = append(out.Errors, err.Error())
-		}
+		snap, err = rt.preview(pb)
 	} else {
 		match := r.Header.Get("If-Match")
-		err := rt.cat.UpdateConfig(actor(r), func(cur *configv1.Config) (*configv1.Config, error) {
+		err = rt.cat.UpdateConfig(actor(r), func(cur *configv1.Config) (*configv1.Config, error) {
 			if match != "" && match != domain.ETag(cur) {
 				return nil, errStale
 			}
-			return pb, check(cur)
+			domain.KeepStored(pb, cur)
+			return pb, nil // UpdateConfig validates it
 		})
 		if errors.Is(err, errStale) {
 			http.Error(w, err.Error(), http.StatusPreconditionFailed)
 			return
 		}
-		out.Saved = err == nil || errors.Is(err, usecase.ErrNotApplied)
-		if out.Saved {
+		if err == nil {
+			out.Saved, snap = true, rt.cat.Current()
 			w.Header().Set("ETag", domain.ETag(pb))
 			rt.log.Info("config saved", "by", actor(r), "remote", clientIP(r))
 		}
-		if err != nil {
-			out.Errors = append(out.Errors, err.Error())
-		}
 	}
-	status := http.StatusOK
-	if len(out.Errors) > 0 && !out.Saved {
-		status = http.StatusUnprocessableEntity
+	if err != nil {
+		out.Errors = []string{err.Error()}
+		writeJSON(w, http.StatusUnprocessableEntity, out)
+		return
 	}
-	writeJSON(w, status, out)
+	out.Issues = snap.Issues
+	writeJSON(w, http.StatusOK, out)
 }
 
 // decide backs the admin's decision tester. It answers what /data would for the posted facts,
@@ -152,15 +138,11 @@ func (rt *Router) decide(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "config: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		if cur, err := rt.cat.Config(); err == nil {
-			domain.KeepStored(pb, cur) // the blocked bundles
-		}
-		c, err := domain.ParseConfig(pb)
+		snap, err = rt.preview(pb)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 			return
 		}
-		snap = rt.draft(c)
 	}
 	b, via, why, err := snap.Explain(facts, time.Now())
 	out := struct {

@@ -17,9 +17,9 @@ type Span struct {
 }
 
 // Open reads the entry's decoded bytes: a stored entry as is, a deflated one inflated on demand.
-func (s Span) Open(ra io.ReaderAt) io.ReadSeekCloser {
+func (s Span) Open(ra io.ReaderAt) io.ReadSeeker {
 	if !s.Deflate {
-		return nopCloser{io.NewSectionReader(exact{ra}, s.Off, s.Raw)}
+		return io.NewSectionReader(exact{ra}, s.Off, s.Raw)
 	}
 	return &inflater{ra: ra, s: s}
 }
@@ -29,7 +29,7 @@ func (s Span) Open(ra io.ReaderAt) io.ReadSeekCloser {
 type inflater struct {
 	ra      io.ReaderAt
 	s       Span
-	r       io.ReadCloser
+	r       io.Reader
 	pos, at int64
 }
 
@@ -52,7 +52,6 @@ func (z *inflater) Read(p []byte) (int, error) {
 		return 0, io.EOF
 	}
 	if z.r == nil || z.pos < z.at {
-		_ = z.Close()
 		z.r, z.at = flate.NewReader(io.NewSectionReader(z.ra, z.s.Off, z.s.Raw)), 0
 	}
 	if z.at < z.pos {
@@ -71,25 +70,16 @@ func (z *inflater) Read(p []byte) (int, error) {
 	return n, short(err)
 }
 
-func (z *inflater) Close() error {
-	if z.r == nil {
-		return nil
-	}
-	err := z.r.Close()
-	z.r = nil
-	return err
-}
-
 const frameLen = 18 // gzip header and trailer
 
 var gzipHeader = []byte{0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0xff}
 
 // frame turns a deflate span into gzip without compressing again: a gzip header, the span,
 // then a trailer with its CRC-32 and size.
-func frame(ra io.ReaderAt, s Span) io.ReadSeekCloser {
+func frame(ra io.ReaderAt, s Span) io.ReadSeeker {
 	tail := binary.LittleEndian.AppendUint32(nil, s.CRC)
 	tail = binary.LittleEndian.AppendUint32(tail, uint32(s.Size))
-	return nopCloser{io.NewSectionReader(frameAt{exact{ra}, s, tail}, 0, s.Raw+frameLen)}
+	return io.NewSectionReader(frameAt{exact{ra}, s, tail}, 0, s.Raw+frameLen)
 }
 
 // frameAt reads the gzip framing of a span: header, then the span from the zip, then the trailer.
@@ -140,7 +130,3 @@ func short(err error) error {
 	}
 	return err
 }
-
-type nopCloser struct{ io.ReadSeeker }
-
-func (nopCloser) Close() error { return nil }

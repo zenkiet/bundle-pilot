@@ -15,7 +15,8 @@
 	import { Search } from '@lucide/svelte';
 	import { fade, scale } from 'svelte/transition';
 
-	let { commands, open = $bindable(false) }: { commands: Command[]; open?: boolean } = $props();
+	let { commands }: { commands: Command[] } = $props();
+	let open = $state(false);
 	let query = $state('');
 	let cursor = $state(0);
 	let input = $state<HTMLInputElement | null>(null);

@@ -81,14 +81,14 @@ Three things decide, in this order:
 | Priority | Decision | What it does |
 |:---:|---|---|
 | 1 | **Rules** | The first rule whose conditions all match. Exact values, lists, version ranges, a stable percentage of users, with an optional expiry date. |
-| 2 | **Backend table** | The newest build that fits the backend version the app reported, so a frontend never runs ahead of its API. |
+| 2 | **Backend table** | The newest build that fits the backend version the app reported, so a frontend never runs ahead of its API; a backend older than every entry gets the oldest. |
 | 3 | **Default** | What everyone else gets. |
 
 ## What you get
 
 | Capability | What it means |
 |---|---|
-| **Builds side by side** | Old and new versions serve at once; hashed files resolve across all of them, so a session that was open during a switch never breaks. |
+| **Builds side by side** | Old and new versions serve at once; files resolve across all of them, so a session that was open during a switch never breaks. |
 | **Targeting without code** | Pick users by store, tenant, user id, app version, backend version, or a percentage that only grows as you raise it. |
 | **An admin UI** | Upload zips, edit rules, test a decision before saving, watch what is being served, block a bad build in one click, restore any earlier config. Works on a phone as well as a desktop. |
 | **Safe for a team** | Saves never overwrite a newer one, every save is kept with who made it, and CI gets scoped API tokens instead of the admin password. |

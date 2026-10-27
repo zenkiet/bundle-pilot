@@ -4,6 +4,7 @@ package mirror
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"log/slog"
 	"maps"
 	"os"
+	"path"
 	"slices"
 	"strings"
 	"sync"
@@ -36,17 +38,16 @@ type Object struct {
 type Mirror struct {
 	store Store
 	dir   string
-	name  string // the source, for logs
 	log   *slog.Logger
 	mu    sync.Mutex
 	err   string    // the last sync error, "" after a success
-	gen   uint64    // moves each time err changes
 	at    time.Time // when the last sync ran
 	n     int       // how many zips the store listed
 }
 
+// New mirrors store into dir; name is the source, for logs.
 func New(store Store, dir, name string, log *slog.Logger) *Mirror {
-	return &Mirror{store: store, dir: dir, name: name, log: log}
+	return &Mirror{store: store, dir: dir, log: log.With("source", name)}
 }
 
 // Run syncs every interval until ctx is done.
@@ -61,13 +62,6 @@ func (m *Mirror) Run(ctx context.Context, every time.Duration) {
 			_ = m.Sync(ctx)
 		}
 	}
-}
-
-// State returns the last sync error and a counter that moves when it changes.
-func (m *Mirror) State() (lastErr string, gen uint64) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.err, m.gen
 }
 
 func (m *Mirror) Status() (at time.Time, objects int, lastErr string) {
@@ -88,22 +82,31 @@ func (m *Mirror) Sync(ctx context.Context) error {
 	}
 	m.mu.Lock()
 	changed := msg != m.err
-	if changed {
-		m.err = msg
-		m.gen++
-	}
-	m.at, m.n = time.Now(), n
+	m.err, m.at, m.n = msg, time.Now(), n
 	m.mu.Unlock()
 	switch {
 	case changed && err != nil:
-		m.log.Warn("sync failed", "source", m.name, "error", err)
+		m.log.Warn("sync failed", "error", err)
 	case changed:
-		m.log.Info("sync recovered", "source", m.name)
+		m.log.Info("sync recovered")
 	}
 	return err
 }
 
 func (m *Mirror) sync(ctx context.Context) (int, error) {
+	if err := os.MkdirAll(m.dir, 0o755); err != nil {
+		return 0, err
+	}
+	root, err := os.OpenRoot(m.dir)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = root.Close() }()
+	// Read before listing, so a zip uploaded in between is never taken for one the store dropped.
+	entries, err := fs.ReadDir(root.FS(), ".")
+	if err != nil {
+		return 0, err
+	}
 	objs, err := m.store.List(ctx)
 	if err != nil {
 		return 0, err
@@ -118,18 +121,6 @@ func (m *Mirror) sync(ctx context.Context) (int, error) {
 	if len(want) == 0 {
 		return 0, errors.New("lists no zips, keeping the local files")
 	}
-	if err := os.MkdirAll(m.dir, 0o755); err != nil {
-		return 0, err
-	}
-	root, err := os.OpenRoot(m.dir)
-	if err != nil {
-		return 0, err
-	}
-	defer func() { _ = root.Close() }()
-	entries, err := fs.ReadDir(root.FS(), ".")
-	if err != nil {
-		return 0, err
-	}
 	var errs []error
 	for _, name := range slices.Sorted(maps.Keys(want)) {
 		o := want[name]
@@ -142,8 +133,7 @@ func (m *Mirror) sync(ctx context.Context) (int, error) {
 			errs = append(errs, fmt.Errorf("%s: %w", name, err))
 			continue
 		}
-		m.log.Info("bundle fetched",
-			"source", m.name, "zip", name, "bytes", o.Size, "took", time.Since(start).Round(time.Millisecond).String())
+		m.log.Info("bundle fetched", "zip", name, "bytes", o.Size, "took", time.Since(start).Round(time.Millisecond).String())
 	}
 	for _, e := range entries {
 		name := e.Name()
@@ -151,7 +141,7 @@ func (m *Mirror) sync(ctx context.Context) (int, error) {
 			continue
 		}
 		if root.Remove(name) == nil {
-			m.log.Info("bundle removed", "source", m.name, "zip", name)
+			m.log.Info("bundle removed", "zip", name)
 		}
 	}
 	return len(want), errors.Join(errs...)
@@ -163,23 +153,31 @@ func (m *Mirror) fetch(ctx context.Context, root *os.Root, o Object) error {
 		return err
 	}
 	defer func() { _ = rc.Close() }()
-	tmp := "." + o.Key + ".part"
-	f, err := root.Create(tmp)
+	return Replace(root, o.Key, 0o666, func(f *os.File) (time.Time, error) {
+		n, err := io.Copy(f, rc)
+		if err == nil && n != o.Size {
+			err = fmt.Errorf("got %d of %d bytes", n, o.Size)
+		}
+		return o.ModTime, err
+	})
+}
+
+func Replace(root *os.Root, name string, perm os.FileMode, write func(*os.File) (time.Time, error)) error {
+	dir, base := path.Split(name)
+	tmp := dir + "." + base + "." + rand.Text() + ".part"
+	f, err := root.OpenFile(tmp, os.O_RDWR|os.O_CREATE|os.O_EXCL, perm)
 	if err != nil {
 		return err
 	}
-	n, err := io.Copy(f, rc)
+	mt, err := write(f)
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
-	if err == nil && n != o.Size {
-		err = fmt.Errorf("got %d of %d bytes", n, o.Size)
+	if err == nil && !mt.IsZero() {
+		err = root.Chtimes(tmp, mt, mt)
 	}
 	if err == nil {
-		err = root.Chtimes(tmp, o.ModTime, o.ModTime)
-	}
-	if err == nil {
-		err = root.Rename(tmp, o.Key)
+		err = root.Rename(tmp, name)
 	}
 	if err != nil {
 		_ = root.Remove(tmp)

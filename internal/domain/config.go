@@ -1,7 +1,7 @@
 package domain
 
 import (
-	"bytes"
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/jsontext"
@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"maps"
 	"math"
 	"slices"
 	"strconv"
@@ -56,8 +57,8 @@ type Source struct {
 	Prefix          string
 	Endpoint        string
 	Region          string
-	AccessKeyID     string `json:"-"`
-	SecretAccessKey string `json:"-"`
+	AccessKeyID     string
+	SecretAccessKey string
 	Poll            time.Duration
 }
 
@@ -68,17 +69,15 @@ func (s Source) String() string {
 	return s.Type + "://" + s.Bucket + "/" + s.Prefix
 }
 
-// Rule sends visitors whose facts match When to Bundle, until Until. NewSnapshot sets Active
-// when the rule is usable: its bundle serves and nothing in it is broken.
+// Rule sends visitors whose facts match all its conditions to Bundle, until Until. NewSnapshot
+// sets Active when the rule is usable: its bundle serves and nothing in it is broken.
 type Rule struct {
-	ID     string         `json:"id"`
-	Note   string         `json:"note,omitempty"`
-	When   jsontext.Value `json:"when"`
-	Bundle string         `json:"bundle"`
-	Until  time.Time      `json:"until,omitzero"`
-	Active bool           `json:"active"`
+	ID     string
+	Bundle string
+	Until  time.Time
+	Active bool
 	conds  []cond
-	key    string // When in canonical form, to spot two rules with the same conditions
+	key    string // the conditions with lower-case names (values as written), to spot repeated ones
 }
 
 // cond is one fact of a rule's When. A value matches when it is one of exact, falls in the
@@ -118,12 +117,9 @@ func EncodeConfig(pb *configv1.Config) ([]byte, error) {
 
 // ParseConfig validates config.pb and turns it into a Config. It leaves pb unchanged.
 func ParseConfig(pb *configv1.Config) (Config, error) {
-	layout := version.Default
-	if pb.DateFormat != "" {
-		var err error
-		if layout, err = version.ParseLayout(pb.DateFormat); err != nil {
-			return Config{}, fmt.Errorf("dateFormat %q: %w", pb.DateFormat, err)
-		}
+	layout, err := version.ParseLayout(cmp.Or(pb.DateFormat, version.Default.String()))
+	if err != nil {
+		return Config{}, fmt.Errorf("dateFormat %q: %w", pb.DateFormat, err)
 	}
 	src, err := parseSource(pb.Source)
 	if err != nil {
@@ -165,8 +161,8 @@ func ParseConfig(pb *configv1.Config) (Config, error) {
 		}
 		// when.backend must compare the same shape, date or version, as the backend keys.
 		for _, cd := range r.conds {
-			compares := cd.fact == "backend" && len(cd.cmps) > 0
-			if compares && backendKind != version.Invalid && cd.cmps[0][0].kind != backendKind {
+			other := slices.ContainsFunc(cd.cmps, func(b []bound) bool { return b[0].kind != backendKind })
+			if err == nil && cd.fact == "backend" && backendKind != version.Invalid && other {
 				err = errors.New("when.backend compares a different shape than the backend keys")
 			}
 		}
@@ -301,7 +297,7 @@ func (b bound) holds(layout version.Layout, v string) bool {
 }
 
 func parseRule(i int, rf *configv1.Rule, layout version.Layout) (Rule, error) {
-	r := Rule{ID: strings.TrimSpace(rf.Id), Note: strings.TrimSpace(rf.Note), Bundle: strings.TrimSpace(rf.Bundle)}
+	r := Rule{ID: strings.TrimSpace(rf.Id), Bundle: strings.TrimSpace(rf.Bundle)}
 	switch {
 	case r.ID == "":
 		r.ID = "#" + strconv.Itoa(i+1)
@@ -332,7 +328,9 @@ func parseRule(i int, rf *configv1.Rule, layout version.Layout) (Rule, error) {
 		return r, errors.New(`when is empty, which would match everyone: set "default" instead`)
 	}
 	names := map[string]string{}
-	for name, v := range when {
+	lower := map[string]jsontext.Value{}
+	for _, name := range slices.Sorted(maps.Keys(when)) {
+		v := when[name]
 		key := strings.ToLower(name)
 		if !validName(name) {
 			return r, fmt.Errorf("fact name %q: use 1-64 of A-Z a-z 0-9 . _ -", name)
@@ -341,16 +339,15 @@ func parseRule(i int, rf *configv1.Rule, layout version.Layout) (Rule, error) {
 			return r, fmt.Errorf("facts %q and %q differ only by case", other, name)
 		}
 		names[key] = name
+		lower[key] = v
 		c, err := parseCond(key, v, layout)
 		if err != nil {
 			return r, fmt.Errorf("when.%s: %w", name, err)
 		}
 		r.conds = append(r.conds, c)
 	}
-	r.When = jsontext.Value(raw)
-	if err := r.When.Canonicalize(); err == nil {
-		r.key = strings.ToLower(string(r.When))
-	}
+	key, _ := json.Marshal(lower, json.Deterministic(true)) // raw values that just parsed: cannot fail
+	r.key = string(key)
 	return r, nil
 }
 
@@ -500,7 +497,7 @@ func parseCond(fact string, v jsontext.Value, layout version.Layout) (cond, erro
 			if err != nil || n < 0 || n > 100 {
 				return c, fmt.Errorf("%q: want a whole number from 0 to 100 before %%", s)
 			}
-			c.pct = n
+			c.pct = max(c.pct, n) // a list matches any element: ["*", "10%"] is everyone
 		case s[0] == '<' || s[0] == '>':
 			bounds, err := parseBounds(s, layout)
 			if err != nil {
@@ -560,7 +557,7 @@ func scalar(v jsontext.Value) (string, error) {
 		err := json.Unmarshal(v, &s)
 		return strings.TrimSpace(s), err
 	case '0':
-		return string(bytes.TrimSpace(v)), nil
+		return string(v), nil
 	case 't':
 		return "true", nil
 	case 'f':
