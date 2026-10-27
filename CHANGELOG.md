@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.2.4 - 2026-10-27
+#### 🐛 Bug Fixes
+- 🐛 resolve Link preloads against the page behind a prefix proxy - (9836959) - *zenkiet*
+
+- - -
+
 ## v0.2.3 - 2026-10-27
 #### ♻️ Code Refactoring
 - ♻️ simplify the gateway and fix upload, sync and rule bugs - (d41b348) - *zenkiet*
