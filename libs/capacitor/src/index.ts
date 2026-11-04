@@ -20,29 +20,25 @@ export interface OtaOptions {
 const TIMEOUT = 5000; // per request
 const DOWNLOAD_TIMEOUT = 60_000;
 
-// The first three are kept from the app this code came from, so devices in the field keep their state.
+// Kept from the app this code came from, so devices in the field keep their state.
 const TRYING = 'ota.trying'; // the bundle set() is about to start
 const FAILED = 'ota.failed'; // a bundle Capgo rolled back: never offered again
 const MANIFEST = 'ota.manifest.'; // + bundle id: digest of the manifest it was downloaded with
-const DECISION = 'ota.decision'; // the gateway's last answer, { key, bundle }, so a start never waits on it
 
 /**
  * A Pilot for native apps: asks the OTA gateway which bundle these facts get, verifies its signed
  * manifest, downloads it with Capgo and reloads into it. Off the native platform it always stays.
  *
- * One question per facts per session. While the last answer for these facts needs no update, check()
- * goes on at once and the question revalidates in the background; an update it finds installs at the
- * next navigation. A failure stays and is not retried that session.
+ * One question per facts per session. The first check() for these facts waits for the answer, so an
+ * update installs before the app goes on; once the answer needs no update, check() goes on at once.
+ * A failure stays and is not retried that session.
  */
 export function createOtaPilot(o: OtaOptions): Pilot {
 	if (!Capacitor.isNativePlatform() || !o.gateway || !o.publicKey) return { version: o.version, check: () => true };
 	const api = `${o.gateway.replace(/\/+$/, '')}/__gateway`;
 	const stays = (v: string | null | undefined) => !v || v === o.version || v === localStorage.getItem(FAILED);
 
-	let last: { key: string; bundle: string } | null = null;
-	try {
-		last = JSON.parse(localStorage.getItem(DECISION) ?? 'null');
-	} catch {}
+	let last: { key: string; bundle: string } | null = null; // this session's answer
 	const asked = new Map<string, Promise<string | null>>();
 	let installing: Promise<boolean> | undefined;
 
@@ -61,7 +57,6 @@ export function createOtaPilot(o: OtaOptions): Pilot {
 				const v = res.status === 200 ? res.data?.bundle : undefined;
 				if (typeof v !== 'string' || !v) return null;
 				last = { key: k, bundle: v };
-				localStorage.setItem(DECISION, JSON.stringify(last));
 				return v;
 			})
 			.catch(() => null);

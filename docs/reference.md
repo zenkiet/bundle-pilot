@@ -22,6 +22,11 @@ dist/
                         main-ABCD1234.js.br: optional brotli sidecar, stored
 ```
 
+Every bundle serves under one mount path, the default's `<base href>`: a bundle
+built for another base is not served (rules and the backend table skip it, and
+the status says why), since its pages would load there and 404 on their files.
+Build every version with the same base href.
+
 One zip is one version and the gateway serves it in place: a deflated entry
 goes out as `gzip` with its stream framed, a stored `x.br` next to `x` as
 `br`, and anything else is inflated on demand. Byte ranges work on stored

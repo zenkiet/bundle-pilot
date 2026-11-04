@@ -44,8 +44,9 @@ into it.
 - **Rolls back by itself.** A bundle that never starts is rolled back by Capgo,
   and one that fails to bootstrap is reset by `startOta().failed()`. A bundle
   that rolled back is not offered again.
-- **Never slows a start.** The last answer is remembered. While it needs no
-  update, the app starts at once and asks again in the background.
+- **Updates before the app goes on.** The first navigation of a session waits
+  for the gateway (each request times out after 5 s), so an update installs right away instead of
+  at a later tap. Later navigations go on at once.
 - **Knows the native app.** The app's native version goes along with every
   question, so a bundle that needs newer native plugins never reaches an app
   that cannot run it.
@@ -133,7 +134,7 @@ navigation through. The same code therefore runs in `ng serve` and on the web.
 
 Upload `4.80.0` to the gateway, and add a rule such as
 `{ "when": { "storeID": ["2020210"] }, "bundle": "4.80.0" }`. Devices of that
-store pick it up at their next navigation, while everyone else stays put. To
+store pick it up at their next start, while everyone else stays put. To
 widen the rollout, change the rule. To back out, block the bundle in the admin
 UI.
 
@@ -220,10 +221,10 @@ built-in one. Off the native platform it does nothing.
 1. **Ask.** The first `check` for a set of facts posts them, along with the
    native app version, to `POST /__gateway/data`. This happens once per
    session, through Capacitor's native HTTP, so CORS does not apply.
-2. **Answer from memory.** The last answer is kept. While it names the running
-   bundle, or one that rolled back, `check` returns `true` at once and the
-   question runs in the background. An update it finds installs at the next
-   navigation.
+2. **Wait for the answer.** That first `check` waits for the gateway. When the
+   answer names the running bundle, or one that rolled back, it returns `true`,
+   and so does every later `check` for those facts, at once. Otherwise the
+   update installs before the navigation goes on.
 3. **Verify.** The pilot fetches `bundle.sha256` and its signature, and checks
    them with WebCrypto Ed25519. An unsigned or tampered bundle is never
    downloaded.
@@ -241,7 +242,6 @@ current bundle and is not retried until the next start.
 
 | Key | |
 |---|---|
-| `ota.decision` | the gateway's last answer, so a start never waits on it |
 | `ota.trying` | the bundle being started, to detect a rollback |
 | `ota.failed` | the last bundle that rolled back; it is not offered again |
 | `ota.manifest.<id>` | the digest of the manifest a downloaded bundle came from |

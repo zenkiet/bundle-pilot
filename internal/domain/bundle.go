@@ -143,6 +143,15 @@ func NewSnapshot(inv Inventory, now time.Time, prevDefault string) *Snapshot {
 		}
 	}
 	s.pickDefault(inv.Config.Default, prevDefault)
+	// One mount path serves every bundle: one built for another <base href> would get its pages there and
+	// 404 on its files, so nothing routes to it.
+	for _, b := range s.order {
+		if s.bundles[b.Version] != nil && b.base != s.Default.base {
+			delete(s.bundles, b.Version)
+			s.Issues = append(s.Issues, fmt.Sprintf(
+				"bundle %s has <base href> %s, the gateway serves %s (the default's): not served", b.Version, b.base, s.Default.base))
+		}
+	}
 	s.Issues = s.Config.Backend.validate(s.Config.Dates, s.unserved, now, s.Issues)
 	if s.Config.Auth.Username == "" && s.Setup == "" {
 		s.Issues = append(s.Issues, "no admin password: anyone who reaches /__gateway/ can change the config")
@@ -181,6 +190,8 @@ func (s *Snapshot) unserved(v string) string {
 		return ""
 	case slices.Contains(s.Config.Blocked, v):
 		return "is blocked"
+	case s.Loaded(v):
+		return "has another <base href> than the default"
 	}
 	return "is not on disk"
 }
