@@ -15,8 +15,7 @@ const (
 	minRate   = 16 << 10
 )
 
-// extendDeadline lets slow clients finish sending or receiving a large body; the server
-// timeouts still bound the rest.
+// extendDeadline gives a large body time at minRate; the server timeouts bound the rest.
 func extendDeadline(w http.ResponseWriter, n int64) {
 	if n > largeBody {
 		rc, t := http.NewResponseController(w), time.Now().Add(time.Minute+time.Duration(n/minRate)*time.Second)
@@ -25,16 +24,15 @@ func extendDeadline(w http.ResponseWriter, n int64) {
 	}
 }
 
-// static serves rel from the bundle picked for this visitor. A path the bundle lacks gets the
-// app's index.html, so client-side routes work, unless it names a file (it has an extension)
-// and the browser is not asking for a page.
+// static answers a path the bundle lacks with index.html, for client-side routes, unless it is a
+// file (it has an extension) the browser does not want as a page.
 func (rt *Router) static(w http.ResponseWriter, r *http.Request, snap *domain.Snapshot, rel string) {
 	query, cookie := r.URL.Query().Get(cookieName), cookieValue(r, cookieName)
 	b, cur := snap.Pick(query, cookie)
 	a, owner := snap.Lookup(b, rel)
 	if a == nil {
 		if path.Ext(rel) != "" && !strings.Contains(r.Header.Get("Accept"), "text/html") {
-			http.NotFound(w, r)
+			problem(w, r, http.StatusNotFound, "bundle "+b.Version+" has no such file")
 			return
 		}
 		a, owner = b.Index(), b
@@ -66,9 +64,8 @@ func (rt *Router) static(w http.ResponseWriter, r *http.Request, snap *domain.Sn
 	a.ServeHTTP(w, r)
 }
 
-// link joins a page's Link values for the page at rel. A Link URL resolves against the page,
-// not its <base>, and a proxy that mounts the app under a prefix rewrites only <base>, so a
-// relative URL climbs from the page's folder back to the base.
+// link makes relative URLs climb from the page's folder: a Link URL resolves against the page,
+// not <base>, which is all a prefix proxy rewrites.
 func link(values []string, rel string) string {
 	up := strings.Repeat("../", strings.Count(rel, "/")-1)
 	out := make([]string, len(values))
@@ -81,8 +78,8 @@ func link(values []string, rel string) string {
 	return strings.Join(out, ", ")
 }
 
-// serveManifest stamps ngsw.json with the bundle_rev cookie, so the service worker
-// sees every bundle switch as an update, even back to a version it knows.
+// serveManifest stamps ngsw.json with bundle_rev, so the service worker sees every switch as an
+// update, even back to a version it knows.
 func serveManifest(w http.ResponseWriter, r *http.Request, a *asset.Asset) {
 	body := a.Body()
 	if len(body) == 0 || body[0] != '{' {

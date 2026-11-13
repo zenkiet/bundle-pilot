@@ -3,29 +3,26 @@ export type Facts = Record<string, string | number | boolean | null | undefined>
 export interface PilotOptions {
 	/** Default `/__gateway/data`. */
 	endpoint?: string;
-	/** Budget in ms for a decision the page waits on; past it the page stays. Default 3000. */
+	/** In ms; past it the page stays. Default 3000. */
 	timeout?: number;
-	/** Runs before the page leaves for another bundle, e.g. to show a splash. */
+	/** Runs before the page leaves for another bundle. */
 	beforeSwitch?: () => unknown;
 }
 
 export interface Pilot {
-	/** The bundle this page runs, from the gateway's meta tag; '' when the gateway did not serve it. */
+	/** The bundle this page runs; '' when the gateway did not serve it. */
 	readonly version: string;
-	/**
-	 * true: stay. false: the page is leaving for the bundle the gateway picks for these facts.
-	 * Synchronous unless the answer is unknown; url is where to land, alive() vetoes a stale switch.
-	 */
+	/** true: stay; false: the page is leaving for another bundle. url is where to land; alive() vetoes a stale switch. */
 	check(facts: Facts | null | undefined, url?: string, alive?: () => boolean): boolean | Promise<boolean>;
 }
 
-const BYPASS = 'ngsw-bypass'; // skips the service worker and names the bundle the switch asked for
+const BYPASS = 'ngsw-bypass'; // skips the service worker; names the bundle asked for
 const STORE = 'bundle-pilot';
 
 export const bundleVersion = (): string =>
 	globalThis.document?.querySelector('meta[name="bundle-pilot:bundle"]')?.getAttribute('content') ?? '';
 
-/** factsKey drops what the gateway ignores and sorts, so equal facts give equal keys; '' when none are left. */
+/** Equal facts give equal keys; '' when none are left. */
 export function factsKey(facts: Facts | null | undefined): string {
 	const e = Object.entries(facts ?? {}).filter(([, v]) => v != null && v !== '');
 	return e.length ? JSON.stringify(Object.fromEntries(e.sort(([a], [b]) => (a < b ? -1 : 1)))) : '';

@@ -32,36 +32,35 @@ const (
 // seed keys Stamp's hash, which only has to compare within one run.
 var seed = maphash.MakeSeed()
 
-// Source reads DIST/versions/*.zip and DIST/config.pb and runs the configured
-// mirror. Load must not run concurrently; Stamp, PutBundle and DeleteBundle may.
+// Source must not run Load concurrently; Stamp, PutBundle and DeleteBundle may.
 type Source struct {
 	root       *os.Root // DIST
 	log        *slog.Logger
 	key        ed25519.PublicKey
-	cache      map[string]zipped // the zips of the last load, by version
+	cache      map[string]zipped // the last load, by version
 	haveConfig bool              // a config.pb has loaded since start
 	setup      string            // the first-run token while config.pb is missing
 	active     domain.Source     // the source the mirror runs for
 	mirror     atomic.Pointer[mirror.Mirror]
 	stop       context.CancelFunc
+	events     events
 }
 
-// zipFile is a zip found in versions/.
 type zipFile struct {
-	name string // the version, the file name without .zip
+	name string // the version
 	fp   [2]int64
 }
 
-// New opens the DIST directory dir.
 func New(dir string, log *slog.Logger, key ed25519.PublicKey) (*Source, error) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return nil, err
 	}
-	return &Source{root: root, log: log, key: key, cache: map[string]zipped{}}, nil
+	s := &Source{root: root, log: log, key: key, cache: map[string]zipped{}}
+	s.loadEvents()
+	return s, nil
 }
 
-// Stamp changes when config.pb or any zip is written to, or the mirror's last error changes.
 func (s *Source) Stamp() uint64 {
 	var h maphash.Hash
 	h.SetSeed(seed)
@@ -79,8 +78,6 @@ func (s *Source) Stamp() uint64 {
 	return h.Sum64()
 }
 
-// Load reads config.pb and every zip. A zip whose file has not changed since the last load is
-// reused without being checked again.
 func (s *Source) Load() (domain.Inventory, error) {
 	inv := domain.Inventory{Signed: s.key != nil}
 	var err error
@@ -88,10 +85,13 @@ func (s *Source) Load() (domain.Inventory, error) {
 		return inv, err
 	}
 	if err := s.applySource(inv.Config.Source); err != nil {
-		inv.Errors = append(inv.Errors, "source "+inv.Config.Source.String()+": "+err.Error())
+		inv.Errors = append(inv.Errors, domain.Issue{
+			Code: "source_failed",
+			Text: "source " + inv.Config.Source.String() + ": " + err.Error(),
+		})
 	}
 	if err := s.sourceErr(); err != nil {
-		inv.Issues = append(inv.Issues, err.Error())
+		inv.Issues = append(inv.Issues, domain.Issue{Code: "sync_failed", Text: err.Error()})
 	}
 	zips, err := s.listZips()
 	if err != nil {
@@ -134,27 +134,36 @@ func (s *Source) Load() (domain.Inventory, error) {
 	return inv, nil
 }
 
-// keepPrevious handles a zip that failed to load: its previous load keeps serving while that
-// file is unchanged, as after a replace by rename; else the zip is skipped.
+// keepPrevious keeps a failed zip's previous load serving while its open file is unchanged, as
+// after a replace by rename.
 func (s *Source) keepPrevious(inv *domain.Inventory, next map[string]zipped, name string, err error) {
 	// A missing index.html stays missing; other failures, such as a half-copied zip, may clear.
 	inv.Retry = inv.Retry || !errors.Is(err, domain.ErrNoIndex)
 	if prev, ok := s.cache[name]; ok && prev.unchanged() {
 		next[name] = prev
-		inv.Issues = append(inv.Issues, fmt.Sprintf("bundle %s: %v, keeping previous load", name, err))
+		inv.Issues = append(inv.Issues, domain.Issue{
+			Code:   "bundle_kept_previous",
+			Text:   fmt.Sprintf("bundle %s: %v, keeping previous load", name, err),
+			Bundle: name,
+			Reason: domain.RefusalReason(err),
+		})
 		return
 	}
-	inv.Errors = append(inv.Errors, fmt.Sprintf("bundle %s skipped: %v", name, err))
+	inv.Errors = append(inv.Errors, domain.Issue{
+		Code:   "bundle_refused",
+		Text:   fmt.Sprintf("bundle %s skipped: %v", name, err),
+		Bundle: name,
+		Reason: domain.RefusalReason(err),
+	})
 }
 
-// unchanged reports whether z's open file still holds the bytes it was loaded from: a replace
-// by rename leaves it alone, a write in place does not.
+// unchanged holds after a replace by rename, which leaves z's open file alone, not after a write
+// in place.
 func (z zipped) unchanged() bool {
 	info, err := z.f.Stat()
 	return err == nil && fingerprint(info) == z.fp
 }
 
-// sourceErr is the mirror's last failure, the cause worth showing when versions/ cannot be read.
 func (s *Source) sourceErr() error {
 	if m := s.mirror.Load(); m != nil {
 		if _, _, lastErr := m.Status(); lastErr != "" {
@@ -164,9 +173,8 @@ func (s *Source) sourceErr() error {
 	return nil
 }
 
-// applySource swaps the mirror when the source changes. A new remote syncs once before
-// returning, so this load sees its zips, for at most 20 s while bundles already serve; one that
-// fails to set up is retried next reload.
+// applySource syncs a new remote once before returning, so this load sees its zips: for at most
+// 20 s once bundles serve. One that fails to set up is retried next reload.
 func (s *Source) applySource(src domain.Source) error {
 	if src == s.active {
 		return nil
@@ -187,7 +195,7 @@ func (s *Source) applySource(src domain.Source) error {
 		return err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	m := mirror.New(store, filepath.Join(s.root.Name(), versionsDir), src.String(), s.log)
+	m := mirror.New(store, filepath.Join(s.root.Name(), versionsDir), src.String(), s.log, s.synced)
 	first := ctx
 	if len(s.cache) > 0 { // a slow bucket must not hold up reloads and saves; Run fetches the rest
 		var stop context.CancelFunc
@@ -201,9 +209,8 @@ func (s *Source) applySource(src domain.Source) error {
 	return nil
 }
 
-// loadConfig reads config.pb. One that goes missing, cannot be read or is rejected fails the
-// load, so the snapshot already serving stays. Setup mode, with the admin API open, is only for
-// a start without config.pb.
+// loadConfig fails the load when config.pb goes missing or is bad, so the serving snapshot
+// stays: setup mode, with the API open, is only for a start without config.pb.
 func (s *Source) loadConfig(inv *domain.Inventory) (domain.Config, error) {
 	pb, err := s.ReadConfig()
 	switch {
@@ -216,7 +223,7 @@ func (s *Source) loadConfig(inv *domain.Inventory) (domain.Config, error) {
 		if _, err := s.root.Stat("config.json"); err == nil {
 			msg += "; convert config.json with: gateway import config.json"
 		}
-		inv.Issues = append(inv.Issues, msg)
+		inv.Issues = append(inv.Issues, domain.Issue{Code: "no_config", Text: msg})
 		return domain.ParseConfig(&configv1.Config{}) // the defaults, such as the date layout
 	}
 	var c domain.Config
@@ -230,7 +237,6 @@ func (s *Source) loadConfig(inv *domain.Inventory) (domain.Config, error) {
 	return c, nil
 }
 
-// ReadConfig returns config.pb as stored, or fs.ErrNotExist before the first save.
 func (s *Source) ReadConfig() (*configv1.Config, error) {
 	data, err := s.root.ReadFile(configFile)
 	if err != nil {
@@ -239,12 +245,11 @@ func (s *Source) ReadConfig() (*configv1.Config, error) {
 	return domain.DecodeConfig(data, false)
 }
 
-// WriteConfig replaces config.pb atomically, then records it in DIST/history as saved by by.
-// The watcher picks up the new file.
-func (s *Source) WriteConfig(pb *configv1.Config, by string) error {
+// WriteConfig returns the history revision id, "" when the save added none.
+func (s *Source) WriteConfig(pb *configv1.Config, by string) (string, error) {
 	data, err := domain.EncodeConfig(pb)
 	if err != nil {
-		return err
+		return "", err
 	}
 	old, err := s.ReadConfig()
 	if err != nil {
@@ -262,16 +267,17 @@ func (s *Source) WriteConfig(pb *configv1.Config, by string) error {
 		return time.Time{}, err
 	})
 	if err != nil {
-		return err
+		return "", err
 	}
-	if err := s.record(old, oldAt, pb, by); err != nil {
+	rev, err := s.record(old, oldAt, pb, by)
+	if err != nil {
 		s.log.Warn("config saved, but not recorded in history/", "error", err)
 	}
-	return nil
+	return rev, nil
 }
 
-// PutBundle stores <name>.zip once it proves loadable. A remote source gets it first, and the
-// local copy takes the remote's modification time, so the mirror does not fetch it again.
+// PutBundle stores a zip once it proves loadable. The local copy takes the bucket's mtime, so
+// the mirror does not fetch it again.
 func (s *Source) PutBundle(ctx context.Context, name string, r io.Reader) (files int, replaced bool, err error) {
 	if err := s.root.MkdirAll(versionsDir, 0o755); err != nil {
 		return 0, false, err
@@ -318,7 +324,6 @@ func (s *Source) SyncState() (at time.Time, objects int, lastErr string) {
 	return time.Time{}, 0, ""
 }
 
-// listZips lists the zips in versions/, skipping hidden and partial files.
 func (s *Source) listZips() ([]zipFile, error) {
 	entries, err := fs.ReadDir(s.root.FS(), versionsDir)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -337,7 +342,6 @@ func (s *Source) listZips() ([]zipFile, error) {
 	return out, err
 }
 
-// fingerprint changes with any write to the file that moves its size or mtime.
 func fingerprint(info fs.FileInfo) [2]int64 {
 	return [2]int64{info.Size(), info.ModTime().UnixNano()}
 }

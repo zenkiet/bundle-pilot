@@ -18,7 +18,6 @@ import (
 	"github.com/zenkiet/bundle-pilot/internal/gen/configv1"
 	"github.com/zenkiet/bundle-pilot/internal/handler"
 	"github.com/zenkiet/bundle-pilot/internal/infrastructure/bundlefs"
-	"github.com/zenkiet/bundle-pilot/internal/ui"
 	"github.com/zenkiet/bundle-pilot/internal/usecase"
 )
 
@@ -57,14 +56,14 @@ func run(cfg env.Config, log *slog.Logger) error {
 		return fmt.Errorf("load %s: %w", cfg.Dist, err)
 	}
 	if t := cat.Current().Setup; t != "" {
-		log.Error("first-run setup: enter this token on /__gateway/ui/setup/", "token", t) // no LOG_LEVEL hides Error
+		// no LOG_LEVEL hides Error
+		log.Error("first-run setup: enter this token in the Bundle Pilot app, or send it as X-Setup-Token with UpdateConfig", "token", t)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	go cat.Watch(ctx, 5*time.Second)
 
-	assets, _ := fs.Sub(ui.Build, "build/app")
-	h := handler.New(cat, assets, log)
+	h := handler.New(cat, cfg.Origins, log, ctx.Done())
 	var draining atomic.Bool
 	srv := &http.Server{
 		Addr: cfg.Addr,
@@ -104,7 +103,6 @@ func run(cfg env.Config, log *slog.Logger) error {
 	return srv.Close()
 }
 
-// check loads DIST the way the server does, prints every issue and exits 1 on any error.
 func check(cfg env.Config, args []string) int {
 	if len(args) > 0 {
 		cfg.Dist = args[0]
@@ -119,10 +117,10 @@ func check(cfg env.Config, args []string) int {
 	}
 	snap := cat.Current()
 	for _, e := range snap.Errors {
-		fmt.Println("error:", e)
+		fmt.Println("error:", e.Text)
 	}
 	for _, w := range snap.Issues {
-		fmt.Println("warning:", w)
+		fmt.Println("warning:", w.Text)
 	}
 	fmt.Printf("%d bundles, default %s (%s), %d rules, %d backend steps\n",
 		len(snap.Bundles()), snap.Default.Version, snap.DefaultFrom, len(snap.Config.Rules), len(snap.Config.Backend))
@@ -132,7 +130,6 @@ func check(cfg env.Config, args []string) int {
 	return 0
 }
 
-// importConfig validates a JSON config and stores it as DIST/config.pb.
 func importConfig(cfg env.Config, args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(os.Stderr, "usage: gateway import config.json [DIST]")
@@ -149,8 +146,7 @@ func importConfig(cfg env.Config, args []string) int {
 	return 0
 }
 
-// writeImported saves a JSON config file as dist's config.pb. Like a save from the UI, it keeps
-// the stored admin account and secrets that the JSON leaves out.
+// writeImported keeps the stored admin account and secrets the JSON leaves out, like UpdateConfig.
 func writeImported(file, dist string) error {
 	data, err := os.ReadFile(file)
 	if err != nil {
@@ -176,10 +172,11 @@ func writeImported(file, dist string) error {
 		return err
 	}
 	domain.HashAuth(pb)
-	return src.WriteConfig(pb, "cli")
+	_, err = src.WriteConfig(pb, "cli")
+	return err
 }
 
-// health exits 0 while the local gateway reports healthy, for HEALTHCHECK in images without curl.
+// health serves HEALTHCHECK in images without curl.
 func health(cfg env.Config) int {
 	client := &http.Client{Timeout: 2 * time.Second}
 	res, err := client.Get("http://127.0.0.1" + cfg.Addr + "/healthz")

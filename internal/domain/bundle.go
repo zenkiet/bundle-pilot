@@ -15,16 +15,37 @@ import (
 	"github.com/zenkiet/bundle-pilot/internal/pkg/version"
 )
 
-var ErrNoIndex = errors.New("index.html missing at the root of the zip: zip the build folder's contents, not the folder")
+var ErrNoIndex error = &RefusedError{
+	Reason: "no_index",
+	Err:    errors.New("index.html missing at the root of the zip: zip the build folder's contents, not the folder"),
+}
 
-// Bundle is one loaded build of the app, its files served in place from its zip.
+// RefusedError is why a zip is refused; Reason is a stable code apps can suggest a fix by.
+type RefusedError struct {
+	Reason string
+	Err    error
+}
+
+func (e *RefusedError) Error() string { return e.Err.Error() }
+
+func (e *RefusedError) Unwrap() error { return e.Err }
+
+func RefusalReason(err error) string {
+	if e, ok := errors.AsType[*RefusedError](err); ok {
+		return e.Reason
+	}
+	return ""
+}
+
+// Bundle is one build of the app, served in place from its zip.
 type Bundle struct {
 	Version  string
-	Zip      io.ReaderAt // the zip as loaded, for downloads
+	Zip      io.ReaderAt
 	ZipBytes int64
 	ModTime  time.Time
-	Link     []string // preloads for the page's main scripts and styles, `url>; rel=...` with url as index.html has it
-	Native   string   // the app versions it runs on, from <meta name="bundle-pilot:native">
+	Link     []string // Link header values without the leading "<", url as index.html has it
+	Native   string   // the native app versions it runs on, such as ">=4.102.0"
+	SHA256   string   // of the zip, hex
 	base     string
 	tag      []string
 	files    map[string]*asset.Asset
@@ -32,9 +53,7 @@ type Bundle struct {
 	native   []bound
 }
 
-// NewBundle builds a bundle. index is the page served for index.html, stamped with the version;
-// files keeps the raw page for OTA downloads. native limits the native app versions the bundle
-// runs on, such as ">=4.102.0"; empty means any.
+// NewBundle builds a bundle. index is the stamped page; files keeps the raw one for OTA downloads.
 func NewBundle(ver, baseHref, native string, files map[string]*asset.Asset, index *asset.Asset) (*Bundle, error) {
 	b := &Bundle{
 		Version: ver,
@@ -47,16 +66,14 @@ func NewBundle(ver, baseHref, native string, files map[string]*asset.Asset, inde
 	if b.Native != "" {
 		bounds, err := parseBounds(b.Native, version.Default)
 		if err != nil || bounds[0].kind != version.Dotted {
-			return nil, fmt.Errorf(`<meta name="bundle-pilot:native" content=%q>: `+
-				`want comparisons with app versions, such as ">=4.102.0"`, b.Native)
+			return nil, &RefusedError{Reason: "bad_native", Err: fmt.Errorf(`<meta name="bundle-pilot:native" content=%q>: `+
+				`want comparisons with app versions, such as ">=4.102.0"`, b.Native)}
 		}
 		b.native = bounds
 	}
 	return b, nil
 }
 
-// runs reports whether b works on the given native app version. A bundle with no requirement
-// runs anywhere; otherwise native must be a version that meets it.
 func (b *Bundle) runs(native string) bool {
 	if len(b.native) == 0 {
 		return true
@@ -70,46 +87,51 @@ func (b *Bundle) Index() *asset.Asset { return b.index }
 
 func (b *Bundle) Len() int { return len(b.files) }
 
-// File is rel exactly as zipped, without the stamped index or other bundles' files.
+// File is rel as zipped: the raw index.html, and no fallback to other bundles.
 func (b *Bundle) File(rel string) *asset.Asset { return b.files[rel] }
 
-// Inventory is what a Source found on disk. Errors are refusals, Issues are warnings, and Retry
-// means a failure may clear by itself, so the watcher tries again.
+// Issue is a load error or warning. Code and Reason are stable for apps; Text is for people.
+type Issue struct {
+	Code   string
+	Text   string
+	Rule   string
+	Bundle string
+	Reason string
+}
+
+// Inventory is what a Source loaded. Retry means a failure may clear by itself.
 type Inventory struct {
 	Bundles []*Bundle
 	Config  Config
-	Errors  []string
-	Issues  []string
+	Errors  []Issue
+	Issues  []Issue
 	Retry   bool
 	Signed  bool
 	Setup   string // the first-run token while config.pb is missing
 }
 
-// owned is a file and the bundle it came from.
 type owned struct {
 	asset  *asset.Asset
 	bundle *Bundle
 }
 
-// Snapshot is an immutable view of every loaded bundle; it is swapped atomically on reload.
+// Snapshot is immutable: a reload swaps in a new one.
 type Snapshot struct {
 	BasePath    string
 	Default     *Bundle
-	DefaultFrom string // why Default was chosen: "config", "previous", "newest" or "none"
+	DefaultFrom string // "config", "previous", "newest" or "none"
 	Config      Config
-	Errors      []string
-	Issues      []string
+	Errors      []Issue
+	Issues      []Issue
 	LoadedAt    time.Time
 	Signed      bool
 	Setup       string
-	bundles     map[string]*Bundle // the bundles that serve, by version
-	order       []*Bundle          // every loaded bundle, blocked ones included, newest first
-	fallback    map[string]owned   // every bundle's files but pages and ngsw.json, newest owner
+	bundles     map[string]*Bundle // served ones only
+	order       []*Bundle          // all loaded, newest first
+	fallback    map[string]owned   // files but pages and ngsw.json, by newest owner
 }
 
-// NewSnapshot applies the config to the bundles. prevDefault is the version served so far; it
-// stays the default when the config names one that is not on disk. The default's <base href>
-// becomes the mount path. A blocked bundle stays listed and its files still load for pages
+// NewSnapshot applies the config to the bundles. A blocked bundle's files still load for pages
 // already open, but nothing routes to it.
 func NewSnapshot(inv Inventory, now time.Time, prevDefault string) *Snapshot {
 	s := &Snapshot{
@@ -132,9 +154,8 @@ func NewSnapshot(inv Inventory, now time.Time, prevDefault string) *Snapshot {
 			s.bundles[b.Version] = b
 		}
 	}
-	// Oldest first, so a file name in several bundles belongs to the newest. Pages stay with
-	// their bundle so a removed one never comes back, and so does ngsw.json, whose 404 retires
-	// Angular's service worker.
+	// Oldest first, so the newest owner wins. Pages stay with their bundle so a removed page never
+	// comes back, and ngsw.json too: its 404 retires Angular's service worker.
 	for _, b := range slices.Backward(s.order) {
 		for rel, a := range b.files {
 			if path.Ext(rel) != ".html" && rel != "/ngsw.json" {
@@ -143,18 +164,24 @@ func NewSnapshot(inv Inventory, now time.Time, prevDefault string) *Snapshot {
 		}
 	}
 	s.pickDefault(inv.Config.Default, prevDefault)
-	// One mount path serves every bundle: one built for another <base href> would get its pages there and
-	// 404 on its files, so nothing routes to it.
+	// One mount path serves every bundle: one built for another <base href> would 404 on its files.
 	for _, b := range s.order {
 		if s.bundles[b.Version] != nil && b.base != s.Default.base {
 			delete(s.bundles, b.Version)
-			s.Issues = append(s.Issues, fmt.Sprintf(
-				"bundle %s has <base href> %s, the gateway serves %s (the default's): not served", b.Version, b.base, s.Default.base))
+			s.Issues = append(s.Issues, Issue{
+				Code: "base_mismatch",
+				Text: fmt.Sprintf("bundle %s has <base href> %s, the gateway serves %s (the default's): not served",
+					b.Version, b.base, s.Default.base),
+				Bundle: b.Version,
+			})
 		}
 	}
 	s.Issues = s.Config.Backend.validate(s.Config.Dates, s.unserved, now, s.Issues)
 	if s.Config.Auth.Username == "" && s.Setup == "" {
-		s.Issues = append(s.Issues, "no admin password: anyone who reaches /__gateway/ can change the config")
+		s.Issues = append(s.Issues, Issue{
+			Code: "no_password",
+			Text: "no admin password: anyone who reaches /__gateway/ can change the config",
+		})
 	}
 	keys := map[string]string{}
 	for i := range s.Config.Rules {
@@ -162,12 +189,25 @@ func NewSnapshot(inv Inventory, now time.Time, prevDefault string) *Snapshot {
 		why := s.unserved(r.Bundle)
 		switch {
 		case why != "":
-			s.Issues = append(s.Issues, fmt.Sprintf("rule %s: bundle %s %s, inactive", r.ID, r.Bundle, why))
+			s.Issues = append(s.Issues, Issue{
+				Code:   "rule_inactive",
+				Text:   fmt.Sprintf("rule %s: bundle %s %s, inactive", r.ID, r.Bundle, why),
+				Rule:   r.ID,
+				Bundle: r.Bundle,
+			})
 		case r.lossy():
-			s.Issues = append(s.Issues, fmt.Sprintf(
-				"rule %s: a number in when is 2^53 or more and lost its last digits: quote it as a string, inactive", r.ID))
+			s.Issues = append(s.Issues, Issue{
+				Code: "rule_lossy",
+				Text: fmt.Sprintf("rule %s: a number in when is 2^53 or more and lost its last digits: "+
+					"quote it as a string, inactive", r.ID),
+				Rule: r.ID,
+			})
 		case r.expired(now):
-			s.Issues = append(s.Issues, fmt.Sprintf("rule %s: until has passed, delete it", r.ID))
+			s.Issues = append(s.Issues, Issue{
+				Code: "rule_expired",
+				Text: fmt.Sprintf("rule %s: until has passed, delete it", r.ID),
+				Rule: r.ID,
+			})
 		default:
 			r.Active = true
 		}
@@ -175,7 +215,11 @@ func NewSnapshot(inv Inventory, now time.Time, prevDefault string) *Snapshot {
 			continue // an inactive rule shadows nothing
 		}
 		if first, dup := keys[r.key]; dup {
-			s.Issues = append(s.Issues, fmt.Sprintf("rule %s: same conditions as rule %s, never matches", r.ID, first))
+			s.Issues = append(s.Issues, Issue{
+				Code: "rule_shadowed",
+				Text: fmt.Sprintf("rule %s: same conditions as rule %s, never matches", r.ID, first),
+				Rule: r.ID,
+			})
 		}
 		keys[r.key] = r.ID
 	}
@@ -183,7 +227,6 @@ func NewSnapshot(inv Inventory, now time.Time, prevDefault string) *Snapshot {
 	return s
 }
 
-// unserved says why version v is not served, or "" when it is.
 func (s *Snapshot) unserved(v string) string {
 	switch {
 	case s.bundles[v] != nil:
@@ -196,41 +239,51 @@ func (s *Snapshot) unserved(v string) string {
 	return "is not on disk"
 }
 
-// pickDefault sets the default: the config's when it serves, else the previous default, else
-// the newest bundle that serves.
+// pickDefault keeps the previous default while the config's is not served, so a typo or a
+// pending upload switches nobody.
 func (s *Snapshot) pickDefault(want, prev string) {
 	if len(s.order) == 0 {
 		s.Default, s.DefaultFrom = &Bundle{base: "/"}, "none"
-		s.Errors = append(s.Errors, "no bundles in versions/ yet: upload one")
+		s.Errors = append(s.Errors, Issue{Code: "no_bundles", Text: "no bundles in versions/ yet: upload one"})
 		return
 	}
 	served := slices.IndexFunc(s.order, func(b *Bundle) bool { return s.bundles[b.Version] != nil })
 	newest := s.order[max(served, 0)]
 	if served < 0 {
-		// Every bundle is blocked. Serving a blocked one beats serving nothing.
+		// Serving a blocked bundle beats serving nothing.
 		s.bundles[newest.Version] = newest
-		s.Errors = append(s.Errors, "every bundle is blocked: serving "+newest.Version)
+		s.Errors = append(s.Errors, Issue{
+			Code:   "all_blocked",
+			Text:   "every bundle is blocked: serving " + newest.Version,
+			Bundle: newest.Version,
+		})
 	}
 	s.Default, s.DefaultFrom = newest, "newest"
 	switch {
 	case s.bundles[want] != nil:
 		s.Default, s.DefaultFrom = s.bundles[want], "config"
 	case want == "":
-		s.Issues = append(s.Issues, "config.pb sets no default: the newest bundle serves every visitor without a cookie")
+		s.Issues = append(s.Issues, Issue{
+			Code: "no_default",
+			Text: "config.pb sets no default: the newest bundle serves every visitor without a cookie",
+		})
 	default:
 		if b := s.bundles[prev]; b != nil {
 			s.Default, s.DefaultFrom = b, "previous"
 		}
-		s.Issues = append(s.Issues, fmt.Sprintf("config default %s not on disk, using %s", want, s.Default.Version))
+		s.Issues = append(s.Issues, Issue{
+			Code:   "default_missing",
+			Text:   fmt.Sprintf("config default %s not on disk, using %s", want, s.Default.Version),
+			Bundle: want,
+		})
 	}
 }
 
 func (s *Snapshot) Bundles() []*Bundle { return s.order }
 
-// Bundle is the served bundle of that version: nil when it is not loaded, or blocked.
+// Bundle is nil unless that version is served; Loaded counts blocked ones too.
 func (s *Snapshot) Bundle(version string) *Bundle { return s.bundles[version] }
 
-// Loaded reports whether a bundle of that version is loaded, served or blocked.
 func (s *Snapshot) Loaded(version string) bool {
 	return slices.ContainsFunc(s.order, func(b *Bundle) bool { return b.Version == version })
 }
@@ -247,8 +300,8 @@ func (s *Snapshot) Pick(query, cookie string) (picked, current *Bundle) {
 	return current, current
 }
 
-// Lookup finds rel in b, falling back to the newest bundle that has it (pages and ngsw.json
-// excepted), so sessions opened before a switch keep loading their chunks.
+// Lookup falls back to the newest bundle that has rel, so pages opened before a switch keep
+// loading their chunks.
 func (s *Snapshot) Lookup(b *Bundle, rel string) (*asset.Asset, *Bundle) {
 	if rel == "/index.html" {
 		return b.index, b
@@ -262,27 +315,25 @@ func (s *Snapshot) Lookup(b *Bundle, rel string) (*asset.Asset, *Bundle) {
 	return nil, nil
 }
 
-// Decide picks the bundle for a visitor's facts, in this order:
-//  1. the first active, unexpired rule that matches;
-//  2. the backend table, when the backend fact is posted;
-//  3. the default.
-//
-// via says which one decided. A bundle that is not served, or that needs a newer native app
-// than the native fact, is passed over: the backend table falls back to the closest older step,
-// and the default to the closest older bundle (via "native").
+// Decide tries the rules, then the backend table, then the default. A bundle that is not served,
+// or needs a newer app than the native fact, is skipped: the table and the default fall back to
+// an older one.
 func (s *Snapshot) Decide(f Facts, now time.Time) (*Bundle, string, error) {
 	return s.decide(f, now, nil)
 }
 
-// Explain is Decide that also says, for the admin's tester, why each earlier rule was passed over.
-func (s *Snapshot) Explain(f Facts, now time.Time) (b *Bundle, via string, why []string, err error) {
+// Explain is Decide plus why each earlier rule was skipped and how the deciding one matched.
+func (s *Snapshot) Explain(f Facts, now time.Time) (b *Bundle, via string, why []Skip, match []Match, err error) {
 	b, via, err = s.decide(f, now, &why)
-	return b, via, why, err
+	if id, ok := strings.CutPrefix(via, "rule:"); ok {
+		i := slices.IndexFunc(s.Config.Rules, func(r Rule) bool { return r.ID == id })
+		match = s.Config.Rules[i].held(f)
+	}
+	return b, via, why, match, err
 }
 
-func (s *Snapshot) decide(f Facts, now time.Time, why *[]string) (*Bundle, string, error) {
+func (s *Snapshot) decide(f Facts, now time.Time, why *[]Skip) (*Bundle, string, error) {
 	native, hasNative := f["native"]
-	// serving returns the bundle of version v if it serves and runs on the posted native version.
 	serving := func(v string) *Bundle {
 		if b := s.bundles[v]; b != nil && (!hasNative || b.runs(native)) {
 			return b
@@ -297,7 +348,7 @@ func (s *Snapshot) decide(f Facts, now time.Time, why *[]string) (*Bundle, strin
 			return b, "rule:" + r.ID, nil
 		}
 		if why != nil {
-			*why = append(*why, "rule "+r.ID+": "+r.skipped(f, now, b != nil))
+			*why = append(*why, r.skipped(f, now))
 		}
 	}
 

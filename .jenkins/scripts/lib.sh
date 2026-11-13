@@ -6,7 +6,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 export PATH="$HOME/go/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 if command -v fnm >/dev/null; then
 	eval "$(fnm env --shell bash)"
-	fnm use --install-if-missing --silent-if-unchanged "$(cat frontend/.nvmrc)" >/dev/null
+	fnm use --install-if-missing --silent-if-unchanged "$(cat libs/.nvmrc)" >/dev/null
 fi
 
 CACHE="${CI_CACHE:-$HOME/.cache/bundle-pilot-ci}"

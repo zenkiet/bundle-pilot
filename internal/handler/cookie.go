@@ -21,8 +21,8 @@ func cookieValue(r *http.Request, name string) string {
 	return ""
 }
 
-// setBundle pins version v in the cookie; maxAge -1 clears the pin. changed also moves
-// bundle_rev, so the service worker treats the switch as an update.
+// setBundle clears the pin for maxAge -1; changed also moves bundle_rev, so the service worker
+// sees an update.
 func setBundle(w http.ResponseWriter, r *http.Request, v string, maxAge int, changed bool) {
 	setCookie(w, r, cookieName, v, maxAge)
 	if changed {

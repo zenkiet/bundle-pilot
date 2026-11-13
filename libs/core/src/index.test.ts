@@ -6,7 +6,7 @@ const S1 = { storeID: 'S1', backend: '07.30.2026' };
 const KEY = JSON.stringify({ backend: '07.30.2026', storeID: 'S1' });
 const settle = () => new Promise((r) => setTimeout(r, 20));
 
-// page fakes one page load: the meta tag, URL, cookie jar, localStorage and the gateway's answer.
+// page fakes one page load.
 function page({ url = 'https://app.test/dashboard', version = '4.100.0', answer = '4.100.0' as string | Error, cookies = true, stored = {} as Record<string, string> } = {}) {
 	const jar = new Map<string, string>();
 	const seen = { posts: 0, replaced: [] as string[], url };

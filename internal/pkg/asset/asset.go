@@ -28,7 +28,6 @@ var (
 	etagSuffix      = [...]string{identity: `"`, gzipped: `-gz"`, brotli: `-br"`}
 )
 
-// variant is one encoding of an asset, read from memory or from a span of an open zip.
 type variant struct {
 	size int64
 	open func() io.ReadSeeker
@@ -36,7 +35,6 @@ type variant struct {
 	enc  []string
 }
 
-// Asset is one file ready to serve: its encodings, content type and cache policy.
 type Asset struct {
 	v         [3]variant // by encoding; a variant with no open func is not available
 	body      []byte
@@ -46,10 +44,8 @@ type Asset struct {
 	noRange   bool
 }
 
-// FromZip serves a file in place from the open zip ra. sum is its SHA-256 (for the ETag), head
-// its first bytes (to sniff the content type), and br its precompressed .br sidecar, or nil. A
-// deflated entry can also go out as gzip: its deflate stream gets a gzip header and trailer
-// instead of being compressed again.
+// FromZip serves a file in place. A deflated entry also goes out as gzip, its deflate stream
+// framed rather than compressed again.
 func FromZip(name string, ra io.ReaderAt, f Span, sum [32]byte, head []byte, br *Span) *Asset {
 	a := newAsset(name, head)
 	tag := `"` + hex.EncodeToString(sum[:8])
@@ -66,7 +62,6 @@ func FromZip(name string, ra io.ReaderAt, f Span, sum [32]byte, head []byte, br 
 	return a
 }
 
-// New keeps body and gz in memory: the stamped index.html and ngsw.json.
 func New(name string, body, gz []byte) *Asset {
 	a := newAsset(name, body)
 	sum := sha256.Sum256(body)
@@ -119,10 +114,8 @@ func contentType(name string, head []byte) string {
 	return http.DetectContentType(head)
 }
 
-// hashed reports whether name carries a content hash, so it can be cached for good: anything
-// under /immutable/, or a name ending in a hash token, such as main-ABCD1234.js. A token is
-// 8 characters of upper-case letters, or of letters mixed with digits, after a - or .; or
-// 16+ hex digits, which may also be the whole name (c39c7e86….png).
+// hashed names can be cached for good: anything under /immutable/, or a name ending in a hash
+// token such as main-ABCD1234.js (8 upper-case or mixed letters and digits) or 16+ hex digits.
 func hashed(name string) bool {
 	if strings.Contains(name, "/immutable/") {
 		return true

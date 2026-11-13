@@ -1,5 +1,5 @@
-// Package s3 is the mirror.Store for S3-compatible buckets. Without keys in
-// config.pb the AWS credential chain applies (env, shared config, IAM role, IRSA, SSO).
+// Package s3 is the mirror.Store for S3-compatible buckets; without keys it uses the AWS
+// credential chain.
 package s3
 
 import (
@@ -19,7 +19,6 @@ import (
 	"github.com/zenkiet/bundle-pilot/internal/infrastructure/mirror"
 )
 
-// Store lists, reads and writes the zips under prefix in one bucket.
 type Store struct {
 	client *s3.Client
 	bucket string

@@ -22,27 +22,25 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// Config is the gateway's selection config, stored as config.pb: rules are
-// checked top to bottom, then the backend table, then the default bundle.
+// Config is config.pb: rules are checked top to bottom, then the backend table, then the default.
 type Config struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
 	Schema string                 `protobuf:"bytes,1,opt,name=schema,json=$schema,proto3" json:"schema,omitempty"`
 	Source *Source                `protobuf:"bytes,2,opt,name=source,proto3" json:"source,omitempty"`
-	// Date layout for backend keys, comparisons and posted facts; MM.dd.YYYY by default.
+	// MM.dd.YYYY by default.
 	DateFormat string `protobuf:"bytes,3,opt,name=date_format,json=dateFormat,proto3" json:"date_format,omitempty"`
-	// Bundle for visitors without a cookie and when nothing matches.
+	// For visitors without a cookie and when nothing matches.
 	DefaultBundle string `protobuf:"bytes,4,opt,name=default_bundle,json=default,proto3" json:"default_bundle,omitempty"`
-	// Oldest backend version each bundle supports: "<backend>": "<bundle>".
-	Backend map[string]string `protobuf:"bytes,5,rep,name=backend,proto3" json:"backend,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Rules   []*Rule           `protobuf:"bytes,6,rep,name=rules,proto3" json:"rules,omitempty"`
-	Auth    *Auth             `protobuf:"bytes,7,opt,name=auth,proto3" json:"auth,omitempty"`
-	// Shown in the admin UI: browser tab and sidebar heading.
-	ProjectName string `protobuf:"bytes,8,opt,name=project_name,json=projectName,proto3" json:"project_name,omitempty"`
-	// Label next to the name, e.g. production.
+	// "<oldest backend>": "<bundle>".
+	Backend     map[string]string `protobuf:"bytes,5,rep,name=backend,proto3" json:"backend,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Rules       []*Rule           `protobuf:"bytes,6,rep,name=rules,proto3" json:"rules,omitempty"`
+	Auth        *Auth             `protobuf:"bytes,7,opt,name=auth,proto3" json:"auth,omitempty"`
+	ProjectName string            `protobuf:"bytes,8,opt,name=project_name,json=projectName,proto3" json:"project_name,omitempty"`
+	// A label such as production.
 	Environment string `protobuf:"bytes,9,opt,name=environment,proto3" json:"environment,omitempty"`
-	// Bundles never served: set through /__gateway/blocked, kept by every config save.
+	// Set by SetBlocked; every config save keeps them.
 	Blocked []string `protobuf:"bytes,10,rep,name=blocked,proto3" json:"blocked,omitempty"`
-	// API tokens: set through /__gateway/tokens, kept by every config save.
+	// Set by CreateToken and DeleteToken; every config save keeps them.
 	Tokens        []*Token `protobuf:"bytes,11,rep,name=tokens,proto3" json:"tokens,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -155,13 +153,12 @@ func (x *Config) GetTokens() []*Token {
 	return nil
 }
 
-// Token lets a script call the admin API with "Authorization: Bearer <secret>".
 type Token struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Name  string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	// read (status, config, history), upload (also adds bundles) or admin (everything).
+	// read, upload or admin.
 	Scope string `protobuf:"bytes,2,opt,name=scope,proto3" json:"scope,omitempty"`
-	// SHA-256 of the secret, hex: the secret is shown once, when the token is made.
+	// Of the secret, hex; the secret is shown once.
 	Sha256 string `protobuf:"bytes,3,opt,name=sha256,proto3" json:"sha256,omitempty"`
 	// RFC 3339.
 	Created       string `protobuf:"bytes,4,opt,name=created,proto3" json:"created,omitempty"`
@@ -227,11 +224,10 @@ func (x *Token) GetCreated() string {
 	return ""
 }
 
-// Revision is one saved config in DIST/history, as clients see it: secrets masked.
+// Revision is one saved config in DIST/history, secrets masked.
 type Revision struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Who saved it: the admin's username, token:<name>, setup or cli.
-	By string `protobuf:"bytes,1,opt,name=by,proto3" json:"by,omitempty"`
+	By    string                 `protobuf:"bytes,1,opt,name=by,proto3" json:"by,omitempty"`
 	// The Config, encoded.
 	Config        []byte `protobuf:"bytes,2,opt,name=config,proto3" json:"config,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -282,13 +278,12 @@ func (x *Revision) GetConfig() []byte {
 	return nil
 }
 
-// Auth protects /__gateway/* except /__gateway/data and /healthz with HTTP Basic auth.
 type Auth struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	Username string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
-	// pbkdf2-sha256, written by the gateway; masked as *** when read back.
+	// Masked as *** when read back.
 	PasswordHash string `protobuf:"bytes,2,opt,name=password_hash,json=passwordHash,proto3" json:"password_hash,omitempty"`
-	// Write-only: hashed into password_hash before config.pb is stored.
+	// Write-only: hashed into password_hash before saving.
 	Password      string `protobuf:"bytes,3,opt,name=password,proto3" json:"password,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -351,16 +346,16 @@ type Source struct {
 	// "local" or "s3".
 	Type   string `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`
 	Bucket string `protobuf:"bytes,2,opt,name=bucket,proto3" json:"bucket,omitempty"`
-	// Folder in the bucket holding the zips, e.g. prod/.
+	// Such as prod/.
 	Prefix string `protobuf:"bytes,3,opt,name=prefix,proto3" json:"prefix,omitempty"`
-	// https://<ACCOUNT_ID>.r2.cloudflarestorage.com for R2; empty for AWS.
+	// Empty for AWS; https://<ACCOUNT_ID>.r2.cloudflarestorage.com for R2.
 	Endpoint string `protobuf:"bytes,4,opt,name=endpoint,proto3" json:"endpoint,omitempty"`
 	// auto for R2.
 	Region string `protobuf:"bytes,5,opt,name=region,proto3" json:"region,omitempty"`
-	// Leave both keys empty to use the AWS credential chain.
+	// Leave both keys empty for the AWS credential chain.
 	AccessKeyId     string `protobuf:"bytes,6,opt,name=access_key_id,json=accessKeyId,proto3" json:"access_key_id,omitempty"`
 	SecretAccessKey string `protobuf:"bytes,7,opt,name=secret_access_key,json=secretAccessKey,proto3" json:"secret_access_key,omitempty"`
-	// How often the bucket is listed, a Go duration such as 30s.
+	// A Go duration, 30s by default.
 	Poll          string `protobuf:"bytes,8,opt,name=poll,proto3" json:"poll,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -455,13 +450,13 @@ func (x *Source) GetPoll() string {
 type Rule struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	// Free text for operators, ignored by the gateway.
+	// For operators; the gateway ignores it.
 	Note string `protobuf:"bytes,2,opt,name=note,proto3" json:"note,omitempty"`
-	// Every entry must match: {"fact": value} with a string, number, boolean or
-	// a list of them; "*", "N%" and "<", "<=", ">", ">=" comparisons are matchers.
+	// {"fact": value}, every entry must match. A value is a string, number, boolean or a list of
+	// them; "*", "N%" and <, <=, >, >= comparisons are matchers.
 	When   *structpb.Struct `protobuf:"bytes,3,opt,name=when,proto3" json:"when,omitempty"`
 	Bundle string           `protobuf:"bytes,4,opt,name=bundle,proto3" json:"bundle,omitempty"`
-	// Expiry: YYYY-MM-DD (through the end of that UTC day) or an RFC 3339 time.
+	// YYYY-MM-DD (through that UTC day) or an RFC 3339 time.
 	Until         string `protobuf:"bytes,5,opt,name=until,proto3" json:"until,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

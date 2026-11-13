@@ -18,7 +18,11 @@ func TestSnapshotServesOnlyTheDefaultsBase(t *testing.T) {
 	if s.Bundle("4.0.0") != nil || s.Config.Rules[0].Active {
 		t.Fatal("4.0.0, built for /client/, is served or a rule routes to it")
 	}
-	issues := strings.Join(s.Issues, "\n")
+	var texts []string
+	for _, issue := range s.Issues {
+		texts = append(texts, issue.Text)
+	}
+	issues := strings.Join(texts, "\n")
 	for _, want := range []string{"bundle 4.0.0 has <base href> /client/, the gateway serves /", "rule big-bang: bundle 4.0.0 has another <base href>"} {
 		if !strings.Contains(issues, want) {
 			t.Errorf("issues lack %q:\n%s", want, issues)

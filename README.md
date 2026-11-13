@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="frontend/src/lib/assets/favicon.svg" alt="Bundle Pilot" width="200">
+  <img src="docs/logo.svg" alt="Bundle Pilot" width="200">
 </p>
 
 <h1 align="center">Bundle Pilot</h1>
@@ -13,7 +13,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/zenkiet/bundle-pilot?color=0f2a3a" alt="License"></a>
   <a href="https://github.com/zenkiet/bundle-pilot/releases"><img src="https://img.shields.io/github/v/release/zenkiet/bundle-pilot?color=f5b400" alt="Release"></a>
   <a href="https://go.dev"><img src="https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white" alt="Go"></a>
-  <a href="https://svelte.dev"><img src="https://img.shields.io/badge/Admin%20UI-Svelte%205-FF3E00?logo=svelte&logoColor=white" alt="Svelte"></a>
+  <a href="proto/bundlepilot/gateway/v1/gateway.proto"><img src="https://img.shields.io/badge/Admin%20API-ConnectRPC-5B5BD6" alt="ConnectRPC admin API"></a>
   <a href="libs/README.md"><img src="https://img.shields.io/badge/SDK-Angular%2018%2B-DD0031?logo=angular&logoColor=white" alt="Angular SDK"></a>
   <a href="https://github.com/zenkiet/bundle-pilot/pkgs/container/bundle-pilot"><img src="https://img.shields.io/badge/ghcr.io-zenkiet%2Fbundle--pilot-2496ED?logo=docker&logoColor=white" alt="Container image"></a>
   <a href="https://github.com/zenkiet/bundle-pilot/issues"><img src="https://img.shields.io/badge/PRs-welcome-3fb950" alt="PRs welcome"></a>
@@ -26,7 +26,7 @@
   <a href="#quick-start">Quick start</a> ·
   <a href="#a-rollout-step-by-step">A rollout</a> ·
   <a href="#client-libraries">Client libraries</a> ·
-  <a href="#admin-ui">Admin UI</a> ·
+  <a href="#admin-api">Admin API</a> ·
   <a href="#documentation">Documentation</a> ·
   <a href="#building-from-source">Building from source</a>
 </p>
@@ -90,10 +90,10 @@ Three things decide, in this order:
 |---|---|
 | **Builds side by side** | Old and new versions serve at once; files resolve across all of them, so a session that was open during a switch never breaks. |
 | **Targeting without code** | Pick users by store, tenant, user id, app version, backend version, or a percentage that only grows as you raise it. |
-| **An admin UI** | Upload zips, edit rules, test a decision before saving, watch what is being served, block a bad build in one click, restore any earlier config. Works on a phone as well as a desktop. |
+| **A headless admin API** | ConnectRPC with a protobuf contract, so a portal, a script or CI can upload zips, edit rules, test a decision before saving, watch what is being served, block a bad build and restore any earlier config, on one gateway or many. |
 | **Safe for a team** | Saves never overwrite a newer one, every save is kept with who made it, and CI gets scoped API tokens instead of the admin password. |
 | **Over-the-air aware** | A build can require a minimum native app version; older apps keep the closest build they can run. |
-| **A first run that sets itself up** | Project name, admin password, bundle source and default build in five steps; the admin API is then protected by HTTP Basic auth. |
+| **A first run that sets itself up** | The gateway prints a setup token; the first config saved with it sets the admin password. Logins then get a 12-hour token, CI a scoped API token. |
 | **Bundles from a folder or a bucket** | Point it at a directory, or at S3, Cloudflare R2, MinIO and the like, and it mirrors the zips by itself. |
 | **Signed bundles** | Optionally, so only builds signed with your key can serve. |
 | **One small binary** | No database: zips are served in place from the page cache, a few MB of RAM whatever the number of versions, roughly ten microseconds of CPU per request. Docker images for amd64 and arm64, binaries for macOS, Windows and Linux. |
@@ -111,17 +111,23 @@ cp 4.78.0.zip 4.80.0.zip dist/versions/
 docker run -p 8080:8080 -v "$PWD/dist:/app/dist" ghcr.io/zenkiet/bundle-pilot
 ```
 
-Open `http://localhost:8080/__gateway/ui/`. The first visit runs the setup
-wizard, which asks for the setup token the gateway printed to its log
-(`docker logs`); after that, the app itself is served at `http://localhost:8080/` and
-the newest build is the default until you say otherwise.
+The app is served at `http://localhost:8080/` right away, the newest build as
+the default until you say otherwise. The admin API waits for setup: the
+gateway prints a setup token to its log (`docker logs`). Finish setup from a
+portal such as bundle-pilot-client, or save a first config with that token:
+
+```sh
+curl http://localhost:8080/__gateway/bundlepilot.gateway.v1.GatewayService/UpdateConfig \
+  -H 'Content-Type: application/json' -H 'X-Setup-Token: <token from the log>' \
+  -d '{"config": {"project_name": "shop", "auth": {"username": "admin", "password": "a long password"}}}'
+```
 
 ### Or run the binary
 
 Prefer a binary? Download one from the
 [releases](https://github.com/zenkiet/bundle-pilot/releases) and run
 `DIST=./dist ./bundle-pilot`. Everything on disk is the `versions/` folder,
-one `config.pb` written by the UI, and the `history/` of its saves.
+one `config.pb` written through the admin API, and the `history/` of its saves.
 
 ### Connect your app
 
@@ -130,16 +136,16 @@ framework, `@bundle-pilot/core`. See [Client libraries](#client-libraries).
 
 ## A rollout, step by step
 
-1. **Upload the new build.** Drop `4.80.0.zip` on the Upload page, or `PUT`
-   it to the API from CI. Nobody sees it yet: the default is still `4.78.0`.
+1. **Upload the new build.** Upload `4.80.0.zip` from the portal, or `PUT`
+   it to the gateway from CI. Nobody sees it yet: the default is still `4.78.0`.
 2. **Pick the pilot group.** Add a rule: store `2020210` gets `4.80.0`. Save.
    The next time that store opens the app, it reloads into the new build.
 3. **Widen.** Change the rule to a list of stores, then to `10%` of users, then
    `50%`. The percentage is stable per user, so raising it only adds people.
 4. **Finish or back out.** Make `4.80.0` the default and delete the rule, or,
-   if something is wrong, block `4.80.0` from its menu: every rule pointing at
+   if something is wrong, block `4.80.0`: every rule pointing at
    it pauses at once and the pilot group is back on `4.78.0` at their next
-   page. Unblock it once fixed, or restore an earlier config from History.
+   page. Unblock it once fixed, or restore an earlier config from the history.
 
 The same config, written as JSON:
 
@@ -177,18 +183,25 @@ provideBundlePilot({
 
 Setup and options are in [libs/README.md](libs/README.md).
 
-## Admin UI
+## Admin API
 
-<p align="center">
-  <img src="docs/admin.png" alt="Bundle Pilot admin UI: health, default bundle, rules, bundles, backend table and decision tester" width="920">
-</p>
+The gateway has no UI of its own: bundle-pilot-client, a separate project, is
+the portal that manages one gateway or many. Everything it does goes through
+`bundlepilot.gateway.v1.GatewayService`, a ConnectRPC service under
+`/__gateway/` whose contract is
+[gateway.proto](proto/bundlepilot/gateway/v1/gateway.proto). Generate a client
+from it in any language, or call it as JSON over HTTP:
 
-Overview shows what is being served and lets you change it. Upload takes
-zips, checks them and reloads the gateway. Settings holds what the setup
-wizard asked: project name, admin account, bundle source and default build.
-Every change goes through a review step before it is saved, and the decision
-tester shows what a visitor with given facts would get, without saving
-anything.
+```sh
+TOKEN=$(curl -s http://localhost:8080/__gateway/bundlepilot.gateway.v1.GatewayService/Login \
+  -H 'Content-Type: application/json' -d '{"username": "admin", "password": "a long password"}' | jq -r .token)
+curl http://localhost:8080/__gateway/bundlepilot.gateway.v1.GatewayService/GetStatus \
+  -H 'Content-Type: application/json' -H "Authorization: Bearer $TOKEN" -d '{}'
+```
+
+The Bundle Pilot app's iOS and Android origins may call it by default; a web
+build on its own host needs its origin in `CORS_ORIGINS`, next to those two.
+`Watch` streams the status and the activity feed, so the app needs no polling.
 
 ## Documentation
 
@@ -197,15 +210,15 @@ anything.
 | [docs/reference.md](docs/reference.md) | The config contract, rule syntax, bundle sources, every endpoint, environment variables, signing and deployment checks. |
 | [libs/README.md](libs/README.md) | The client packages. |
 | `proto/bundlepilot/config/v1/config.proto` | The config as a protobuf contract. |
+| `proto/bundlepilot/gateway/v1/gateway.proto` | The admin API as a ConnectRPC contract. |
 
 ## Building from source
 
-Requires Go 1.27, Node 26 and pnpm.
+Requires Go 1.27; Node 26 and pnpm only for the libraries in `libs/`.
 
 ```sh
-make ui             # build the admin UI into internal/ui/build/app
-make build          # bin/gateway, with the UI embedded
-make gen            # regenerate Go and TypeScript from proto/
+make build          # bin/gateway
+make gen            # regenerate Go from proto/
 make lint           # golangci-lint, including layer rules
 docker compose up --build
 ```

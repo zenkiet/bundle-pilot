@@ -1,30 +1,44 @@
 package handler
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"io/fs"
-	"net/http"
+
+	"connectrpc.com/connect"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	"github.com/zenkiet/bundle-pilot/internal/gen/gatewayv1"
 )
 
-// history lists the saved configs, newest first, with who saved each.
-func (rt *Router) history(w http.ResponseWriter, _ *http.Request) {
+func (rt *Router) ListHistory(_ context.Context, req *connect.Request[gatewayv1.ListHistoryRequest]) (*connect.Response[gatewayv1.ListHistoryResponse], error) {
 	revs, err := rt.cat.History()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	writeJSON(w, http.StatusOK, revs)
+	limit := int(req.Msg.Limit)
+	if limit > 0 && limit < len(revs) {
+		revs = revs[:limit] // newest first
+	}
+	out := &gatewayv1.ListHistoryResponse{}
+	for _, r := range revs {
+		rev := &gatewayv1.Revision{Id: r.ID, At: timestamppb.New(r.At), By: r.By}
+		if req.Msg.Configs {
+			rev.Config = r.Config
+		}
+		out.Revisions = append(out.Revisions, rev)
+	}
+	return connect.NewResponse(out), nil
 }
 
-// revision serves one saved config the way getConfig does, for a diff or a revert.
-func (rt *Router) revision(w http.ResponseWriter, r *http.Request) {
-	pb, err := rt.cat.Revision(r.PathValue("id"))
+func (rt *Router) GetRevision(_ context.Context, req *connect.Request[gatewayv1.GetRevisionRequest]) (*connect.Response[gatewayv1.GetRevisionResponse], error) {
+	pb, err := rt.cat.Revision(req.Msg.Id)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		http.NotFound(w, r)
+		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("no revision %q", req.Msg.Id))
 	case err != nil:
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-	default:
-		writeConfig(w, r, pb)
+		return nil, connect.NewError(connect.CodeInternal, err)
 	}
+	return connect.NewResponse(&gatewayv1.GetRevisionResponse{Config: pb}), nil
 }

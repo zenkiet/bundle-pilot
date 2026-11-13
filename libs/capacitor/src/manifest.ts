@@ -1,4 +1,4 @@
-/** What CapacitorUpdater.download({ manifest }) takes; the plugin checks each file's SHA-256. */
+/** An entry of CapacitorUpdater.download({ manifest }), which checks each file's SHA-256. */
 export interface ManifestEntry {
 	file_name: string;
 	file_hash: string;
@@ -6,7 +6,7 @@ export interface ManifestEntry {
 }
 
 // ponytail: WebCrypto Ed25519 needs WebView 137+ / iOS 17+; older devices fail closed. Add @noble/ed25519 if they matter.
-/** Checks bundle.sha256 against its Ed25519 signature, hex or raw as the gateway accepts it. */
+/** The signature may be hex or raw, as the gateway accepts it. */
 export async function verifyManifest(key: Uint8Array, text: Uint8Array, sig: Uint8Array): Promise<boolean> {
 	const hex = new TextDecoder().decode(sig).trim();
 	const raw = /^[0-9a-f]{128}$/i.test(hex) ? Uint8Array.from(hex.match(/../g)!, (h) => parseInt(h, 16)) : sig;
@@ -15,9 +15,8 @@ export async function verifyManifest(key: Uint8Array, text: Uint8Array, sig: Uin
 }
 
 /**
- * Turns a signed bundle.sha256 (`<hash> *./path` lines) into Capgo entries, or undefined when a line is
- * malformed or index.html is missing. Precompressed `x.br`/`x.gz` copies of a listed `x` are dropped:
- * the gateway does not serve them as files, and Capgo would see duplicate targets.
+ * Capgo entries for a signed bundle.sha256, or undefined when a line is malformed or index.html is
+ * missing. `x.br`/`x.gz` copies of a listed `x` are dropped: the gateway does not serve them as files.
  */
 export function entries(text: Uint8Array, base: string): ManifestEntry[] | undefined {
 	const files = new Map<string, string>();

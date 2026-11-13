@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="../frontend/src/lib/assets/favicon.svg" alt="Bundle Pilot" width="120">
+  <img src="../docs/logo.svg" alt="Bundle Pilot" width="120">
 </p>
 
 <h1 align="center">Bundle Pilot SDK</h1>

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/zenkiet/bundle-pilot/main/frontend/src/lib/assets/favicon.svg" alt="Bundle Pilot" width="96">
+  <img src="https://raw.githubusercontent.com/zenkiet/bundle-pilot/main/docs/logo.svg" alt="Bundle Pilot" width="96">
 </p>
 
 <h1 align="center">@bundle-pilot/capacitor</h1>

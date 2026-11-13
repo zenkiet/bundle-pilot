@@ -8,26 +8,32 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/mod/semver"
+	"github.com/Masterminds/semver/v3"
 )
 
-// Compare orders two dates in l by day, else by semver (4.100.0 > 4.90.0,
-// 1.0.0-rc.1 < 1.0.0); anything else sorts below versions, by text.
+// Semver has no leading zeros; coerced, 07.30.2026 in a YYYY.MM.dd gateway would be a version.
+func init() { semver.CoerceNewVersion = false }
+
+// Compare orders dates by day, else versions by semver; anything else sorts below versions, by text.
 func (l Layout) Compare(a, b string) int {
 	if da := l.Date(a); da != 0 {
 		if db := l.Date(b); db != 0 {
 			return cmp.Compare(da, db)
 		}
 	}
-	ca, cb := canon(a), canon(b)
-	// semver sorts invalid versions first and calls any two of them equal: order those by text.
-	if !semver.IsValid(ca) && !semver.IsValid(cb) {
+	va, errA := semver.NewVersion(a)
+	vb, errB := semver.NewVersion(b)
+	switch {
+	case errA != nil && errB != nil:
 		return strings.Compare(a, b)
+	case errA != nil:
+		return -1
+	case errB != nil:
+		return 1
 	}
-	return semver.Compare(ca, cb)
+	return va.Compare(vb)
 }
 
-// Kind is the shape of a value: a date in the layout, a dotted (semantic) version, or neither.
 type Kind uint8
 
 const (
@@ -36,8 +42,7 @@ const (
 	Dotted
 )
 
-// Kind classifies s as a real date in l or a semantic version (optional v, -pre,
-// +build); a date-shaped non-date such as 02.30.2026 is Invalid.
+// Kind treats a date-shaped non-date such as 02.30.2026 as Invalid, not as a version.
 func (l Layout) Kind(s string) Kind {
 	if d, shaped := l.date(s); shaped {
 		if d == 0 {
@@ -45,27 +50,22 @@ func (l Layout) Kind(s string) Kind {
 		}
 		return Date
 	}
-	if !semver.IsValid(canon(s)) {
+	if _, err := semver.NewVersion(s); err != nil {
 		return Invalid
 	}
 	return Dotted
 }
 
-// canon adds the v prefix semver wants; bundles are named without it.
-func canon(s string) string { return "v" + strings.TrimPrefix(s, "v") }
-
-// Layout is a date format written with YYYY, MM or M, dd or d (DD and yyyy
-// also work), separated by . - or /, kept as the time.Parse layout it maps to.
+// Layout is a date format such as MM.dd.YYYY, kept as its time.Parse layout.
 type Layout struct {
 	name   string
 	layout string
-	shape  *regexp.Regexp // the digits and separators a date in the layout starts with
+	shape  *regexp.Regexp // what a date in the layout starts with
 }
 
-// shapes turns a layout from ParseLayout into a regexp; 2006 is listed before 2 so it wins.
+// shapes lists 2006 before 2 so it wins.
 var shapes = strings.NewReplacer("2006", `\d{4}`, "01", `\d\d`, "02", `\d\d`, "1", `\d\d?`, "2", `\d\d?`, ".", `\.`)
 
-// part is one element of a date format.
 type part struct {
 	std  string // its time.Parse layout, such as "2006"
 	unit int    // 0 year, 1 month, 2 day
@@ -74,7 +74,6 @@ type part struct {
 // Default is the date format used when config.pb sets none.
 var Default, _ = ParseLayout("MM.dd.YYYY")
 
-// ParseLayout reads a date format such as MM.dd.YYYY.
 func ParseLayout(s string) (Layout, error) {
 	l := Layout{name: s}
 	var seen [3]bool
@@ -127,9 +126,8 @@ func (l Layout) Date(s string) int {
 	return d
 }
 
-// date is Date, plus whether s is shaped like a date in l even when it is none, such as
-// 02.30.2026 or 25.10.2026. 13.0.0 is not, so it stays a version: time.Parse alone would
-// reject its month before reading the rest.
+// date also says whether s is shaped like a date, such as 02.30.2026. 13.0.0 is not, so it stays
+// a version: time.Parse alone would reject its month first.
 func (l Layout) date(s string) (int, bool) {
 	if l.shape == nil || !l.shape.MatchString(s) {
 		return 0, false

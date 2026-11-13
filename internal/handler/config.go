@@ -1,54 +1,69 @@
 package handler
 
 import (
-	"encoding/json/jsontext"
-	"encoding/json/v2"
+	"context"
 	"errors"
-	"io"
-	"mime"
-	"net/http"
-	"strings"
 	"time"
 
+	"connectrpc.com/connect"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/zenkiet/bundle-pilot/internal/domain"
 	"github.com/zenkiet/bundle-pilot/internal/gen/configv1"
+	"github.com/zenkiet/bundle-pilot/internal/gen/gatewayv1"
 )
 
-const (
-	maxConfig    = 1 << 20
-	protobufType = "application/x-protobuf"
+var (
+	errNoConfig = errors.New("config is required")
+	errStale    = errors.New("config changed since it was read: reload it")
 )
 
-var errStale = errors.New("config changed since it was read: reload it")
-
-// getConfig serves config.pb as clients see it, with the ETag a PUT sends back as If-Match.
-func (rt *Router) getConfig(w http.ResponseWriter, r *http.Request) {
+func (rt *Router) GetConfig(context.Context, *connect.Request[gatewayv1.GetConfigRequest]) (*connect.Response[gatewayv1.GetConfigResponse], error) {
 	pb, err := rt.cat.Config()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return nil, connect.NewError(connect.CodeInternal, err)
 	}
-	w.Header().Set("ETag", domain.ETag(pb))
-	writeConfig(w, r, domain.Redacted(pb))
+	return connect.NewResponse(&gatewayv1.GetConfigResponse{Config: domain.Redacted(pb), Etag: domain.ETag(pb)}), nil
 }
 
-// writeConfig encodes pb as protobuf for clients that accept it, else as JSON.
-func writeConfig(w http.ResponseWriter, r *http.Request, pb *configv1.Config) {
-	w.Header().Set("Cache-Control", "no-store")
-	if strings.Contains(r.Header.Get("Accept"), protobufType) {
-		b, _ := domain.EncodeConfig(pb)
-		w.Header().Set("Content-Type", protobufType)
-		_, _ = w.Write(b)
-		return
+func (rt *Router) CheckConfig(_ context.Context, req *connect.Request[gatewayv1.CheckConfigRequest]) (*connect.Response[gatewayv1.CheckConfigResponse], error) {
+	if req.Msg.Config == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errNoConfig)
 	}
-	b, _ := protojson.MarshalOptions{Multiline: true}.Marshal(pb)
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write(b)
+	out := &gatewayv1.CheckConfigResponse{}
+	if snap, err := rt.preview(req.Msg.Config); err != nil {
+		out.Error = err.Error()
+	} else {
+		out.Issues = issues(snap.Issues)
+	}
+	return connect.NewResponse(out), nil
 }
 
-// preview is what saving pb would serve: pb on top of the stored config, under the loaded bundles.
+func (rt *Router) UpdateConfig(ctx context.Context, req *connect.Request[gatewayv1.UpdateConfigRequest]) (*connect.Response[gatewayv1.UpdateConfigResponse], error) {
+	pb, etag := req.Msg.Config, req.Msg.Etag
+	if pb == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errNoConfig)
+	}
+	c := from(ctx)
+	rev, err := rt.cat.UpdateConfig(c.who, func(cur *configv1.Config) (*configv1.Config, error) {
+		if etag != "" && etag != domain.ETag(cur) {
+			return nil, errStale
+		}
+		domain.KeepStored(pb, cur)
+		return pb, nil // UpdateConfig validates it
+	})
+	switch {
+	case errors.Is(err, errStale):
+		return nil, connect.NewError(connect.CodeAborted, err)
+	case err != nil:
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	rt.log.Info("config saved", "by", c.who, "remote", c.ip)
+	rt.cat.Record(domain.Event{Kind: "config", By: c.who, Revision: rev})
+	return connect.NewResponse(&gatewayv1.UpdateConfigResponse{Etag: domain.ETag(pb), Issues: issues(rt.cat.Current().Issues)}), nil
+}
+
+// preview is what saving pb would serve, under the loaded bundles.
 func (rt *Router) preview(pb *configv1.Config) (*domain.Snapshot, error) {
 	cur, err := rt.cat.Config()
 	if err != nil {
@@ -63,98 +78,46 @@ func (rt *Router) preview(pb *configv1.Config) (*domain.Snapshot, error) {
 	return domain.NewSnapshot(domain.Inventory{Bundles: snap.Bundles(), Config: c}, time.Now(), snap.Default.Version), nil
 }
 
-// putConfig validates the posted config against the loaded bundles and saves it, unless
-// X-Dry-Run is set. A stale If-Match gets 412. Masked secrets and a missing auth keep the
-// stored values.
-func (rt *Router) putConfig(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxConfig))
+// Decide answers like /data, but sets no cookie and counts nothing.
+func (rt *Router) Decide(_ context.Context, req *connect.Request[gatewayv1.DecideRequest]) (*connect.Response[gatewayv1.DecideResponse], error) {
+	raw, err := protojson.Marshal(req.Msg.GetFacts())
 	if err != nil {
-		http.Error(w, "config over 1 MiB", http.StatusRequestEntityTooLarge)
-		return
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	pb, err := domain.DecodeConfig(body, mt != protobufType)
+	facts, err := domain.ParseFacts(raw)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	var out struct {
-		Saved  bool     `json:"saved"`
-		Errors []string `json:"errors"`
-		Issues []string `json:"issues"`
-	}
-	var snap *domain.Snapshot // what serves, or would, under pb
-	if r.Header.Get("X-Dry-Run") != "" {
-		snap, err = rt.preview(pb)
-	} else {
-		match := r.Header.Get("If-Match")
-		err = rt.cat.UpdateConfig(actor(r), func(cur *configv1.Config) (*configv1.Config, error) {
-			if match != "" && match != domain.ETag(cur) {
-				return nil, errStale
-			}
-			domain.KeepStored(pb, cur)
-			return pb, nil // UpdateConfig validates it
-		})
-		if errors.Is(err, errStale) {
-			http.Error(w, err.Error(), http.StatusPreconditionFailed)
-			return
-		}
-		if err == nil {
-			out.Saved, snap = true, rt.cat.Current()
-			w.Header().Set("ETag", domain.ETag(pb))
-			rt.log.Info("config saved", "by", actor(r), "remote", clientIP(r))
-		}
-	}
-	if err != nil {
-		out.Errors = []string{err.Error()}
-		writeJSON(w, http.StatusUnprocessableEntity, out)
-		return
-	}
-	out.Issues = snap.Issues
-	writeJSON(w, http.StatusOK, out)
-}
-
-// decide backs the admin's decision tester. It answers what /data would for the posted facts,
-// under the posted draft config when there is one, and says why each earlier rule was passed
-// over. It sets no cookie and counts nothing.
-func (rt *Router) decide(w http.ResponseWriter, r *http.Request) {
-	var in struct {
-		Facts  jsontext.Value `json:"facts"`
-		Config jsontext.Value `json:"config"`
-	}
-	if err := json.UnmarshalRead(http.MaxBytesReader(w, r.Body, maxConfig), &in); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	facts, err := domain.ParseFacts(in.Facts)
-	if err != nil {
-		http.Error(w, "facts: "+err.Error(), http.StatusBadRequest)
-		return
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("facts: "+err.Error()))
 	}
 	snap := rt.cat.Current()
-	if len(in.Config) > 0 {
-		pb, err := domain.DecodeConfig(in.Config, true)
-		if err != nil {
-			http.Error(w, "config: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		snap, err = rt.preview(pb)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
-			return
+	if req.Msg.Config != nil {
+		if snap, err = rt.preview(req.Msg.Config); err != nil {
+			return nil, connect.NewError(connect.CodeInvalidArgument, err)
 		}
 	}
-	b, via, why, err := snap.Explain(facts, time.Now())
-	out := struct {
-		Bundle string   `json:"bundle"`
-		Via    string   `json:"via"`
-		Why    []string `json:"why"`
-		Error  string   `json:"error,omitempty"`
-	}{Via: via, Why: why}
+	b, via, why, match, err := snap.Explain(facts, time.Now())
+	out := &gatewayv1.DecideResponse{Via: via}
+	for _, s := range why {
+		out.Why = append(out.Why, &gatewayv1.Skip{
+			Rule:    s.Rule,
+			Reason:  s.Reason,
+			Fact:    s.Fact,
+			Value:   s.Value,
+			Bucket:  int32(s.Bucket),
+			Percent: int32(s.Percent),
+		})
+	}
+	for _, m := range match {
+		out.Match = append(out.Match, &gatewayv1.Match{
+			Fact:    m.Fact,
+			Value:   m.Value,
+			Bucket:  int32(m.Bucket),
+			Percent: int32(m.Percent),
+		})
+	}
 	if err != nil {
 		out.Error = err.Error()
 	} else {
 		out.Bundle = b.Version
 	}
-	writeJSON(w, http.StatusOK, out)
+	return connect.NewResponse(out), nil
 }

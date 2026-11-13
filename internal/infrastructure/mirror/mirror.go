@@ -1,5 +1,4 @@
-// Package mirror keeps a local versions directory equal to the zips a Store
-// lists, so the rest of the gateway keeps reading plain files.
+// Package mirror keeps a local directory equal to a Store's zips, so the gateway reads plain files.
 package mirror
 
 import (
@@ -19,8 +18,8 @@ import (
 	"time"
 )
 
-// Store is one remote's zips by file name. Put returns the modification time
-// the store recorded, so the local copy can match it and skip the next fetch.
+// Store's Put returns the modification time it recorded, so the local copy can match it and skip
+// the next fetch.
 type Store interface {
 	List(ctx context.Context) ([]Object, error)
 	Get(ctx context.Context, key string) (io.ReadCloser, error)
@@ -34,23 +33,21 @@ type Object struct {
 	ModTime time.Time
 }
 
-// Mirror copies a Store's zips into dir. The fields under mu describe the last sync.
 type Mirror struct {
-	store Store
-	dir   string
-	log   *slog.Logger
-	mu    sync.Mutex
-	err   string    // the last sync error, "" after a success
-	at    time.Time // when the last sync ran
-	n     int       // how many zips the store listed
+	store   Store
+	dir     string
+	log     *slog.Logger
+	changed func(kind, zip string) // told "fetch" or "remove" for each zip a sync changes
+	mu      sync.Mutex
+	err     string    // of the last sync
+	at      time.Time // of the last sync
+	n       int       // zips the store listed
 }
 
-// New mirrors store into dir; name is the source, for logs.
-func New(store Store, dir, name string, log *slog.Logger) *Mirror {
-	return &Mirror{store: store, dir: dir, log: log.With("source", name)}
+func New(store Store, dir, name string, log *slog.Logger, changed func(kind, zip string)) *Mirror {
+	return &Mirror{store: store, dir: dir, log: log.With("source", name), changed: changed}
 }
 
-// Run syncs every interval until ctx is done.
 func (m *Mirror) Run(ctx context.Context, every time.Duration) {
 	t := time.NewTicker(every)
 	defer t.Stop()
@@ -72,8 +69,7 @@ func (m *Mirror) Status() (at time.Time, objects int, lastErr string) {
 
 func (m *Mirror) Store() Store { return m.store }
 
-// Sync fetches new or changed zips and deletes those the store no longer lists;
-// a failed or empty listing changes nothing.
+// Sync changes nothing on a failed or empty listing.
 func (m *Mirror) Sync(ctx context.Context) error {
 	n, err := m.sync(ctx)
 	msg := ""
@@ -126,7 +122,7 @@ func (m *Mirror) sync(ctx context.Context) (int, error) {
 		o := want[name]
 		info, err := root.Stat(name)
 		if err == nil && info.Size() == o.Size && info.ModTime().Unix() == o.ModTime.Unix() {
-			continue // already fetched
+			continue
 		}
 		start := time.Now()
 		if err := m.fetch(ctx, root, o); err != nil {
@@ -134,6 +130,7 @@ func (m *Mirror) sync(ctx context.Context) (int, error) {
 			continue
 		}
 		m.log.Info("bundle fetched", "zip", name, "bytes", o.Size, "took", time.Since(start).Round(time.Millisecond).String())
+		m.changed("fetch", name)
 	}
 	for _, e := range entries {
 		name := e.Name()
@@ -142,6 +139,7 @@ func (m *Mirror) sync(ctx context.Context) (int, error) {
 		}
 		if root.Remove(name) == nil {
 			m.log.Info("bundle removed", "zip", name)
+			m.changed("remove", name)
 		}
 	}
 	return len(want), errors.Join(errs...)

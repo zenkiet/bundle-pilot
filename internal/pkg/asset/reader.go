@@ -8,15 +8,14 @@ import (
 	"io"
 )
 
-// Span locates a zip entry's bytes: Raw of them at Off in the file, Size once decoded.
-// Framable means the deflate stream fills Raw exactly, so it can go out as gzip unchanged.
+// Span is a zip entry's bytes. Framable means the deflate stream fills Raw exactly, so it can go
+// out as gzip unchanged.
 type Span struct {
 	Off, Raw, Size    int64
 	CRC               uint32
 	Deflate, Framable bool
 }
 
-// Open reads the entry's decoded bytes: a stored entry as is, a deflated one inflated on demand.
 func (s Span) Open(ra io.ReaderAt) io.ReadSeeker {
 	if !s.Deflate {
 		return io.NewSectionReader(exact{ra}, s.Off, s.Raw)
@@ -74,15 +73,13 @@ const frameLen = 18 // gzip header and trailer
 
 var gzipHeader = []byte{0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 0xff}
 
-// frame turns a deflate span into gzip without compressing again: a gzip header, the span,
-// then a trailer with its CRC-32 and size.
+// frame wraps a deflate span in a gzip header and trailer, without compressing again.
 func frame(ra io.ReaderAt, s Span) io.ReadSeeker {
 	tail := binary.LittleEndian.AppendUint32(nil, s.CRC)
 	tail = binary.LittleEndian.AppendUint32(tail, uint32(s.Size))
 	return io.NewSectionReader(frameAt{exact{ra}, s, tail}, 0, s.Raw+frameLen)
 }
 
-// frameAt reads the gzip framing of a span: header, then the span from the zip, then the trailer.
 type frameAt struct {
 	ra   io.ReaderAt
 	s    Span

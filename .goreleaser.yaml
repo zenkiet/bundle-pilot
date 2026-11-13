@@ -3,10 +3,6 @@ version: 2
 # dist/ is the gateway's own data directory, which --clean would wipe.
 dist: release
 
-before:
-  hooks:
-    - make ui
-
 builds:
   - id: gateway
     main: ./cmd/gateway

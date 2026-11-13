@@ -42,15 +42,14 @@ type Config struct {
 	Tokens      []Token
 }
 
-// Revision is one config as saved, kept in DIST/history.
 type Revision struct {
-	ID string    `json:"id"`
-	At time.Time `json:"at"`
-	By string    `json:"by"`
+	ID     string
+	At     time.Time
+	By     string
+	Config *configv1.Config // secrets masked
 }
 
-// Source is where versions/*.zip come from. The zero value is the local directory; "s3" is
-// any S3-compatible bucket, mirrored into that directory.
+// Source is where versions/*.zip come from; the zero value is the local directory.
 type Source struct {
 	Type            string
 	Bucket          string
@@ -69,36 +68,35 @@ func (s Source) String() string {
 	return s.Type + "://" + s.Bucket + "/" + s.Prefix
 }
 
-// Rule sends visitors whose facts match all its conditions to Bundle, until Until. NewSnapshot
-// sets Active when the rule is usable: its bundle serves and nothing in it is broken.
+// Rule sends visitors who match all its conditions to Bundle until Until. NewSnapshot sets
+// Active when its bundle serves and nothing in it is broken.
 type Rule struct {
 	ID     string
 	Bundle string
 	Until  time.Time
 	Active bool
 	conds  []cond
-	key    string // the conditions with lower-case names (values as written), to spot repeated ones
+	key    string // the conditions, normalized, to spot duplicate rules
 }
 
-// cond is one fact of a rule's When. A value matches when it is one of exact, falls in the
-// first pct percent of users, or satisfies every bound of one entry in cmps.
+// cond is one fact of a rule's When.
 type cond struct {
 	fact   string
 	layout version.Layout
 	pct    int
 	exact  map[string]struct{}
 	cmps   [][]bound
-	lossy  bool // a number >= 2^53: protobuf Struct stores numbers as float64, so its last digits were lost
+	lossy  bool // a number >= 2^53, whose last digits Struct's float64 lost
 }
 
-// bound is one comparison, such as ">=2.0.0"; kind says whether val is a version or a date.
+// bound is one comparison, such as ">=2.0.0".
 type bound struct {
 	op   string
 	val  string
 	kind version.Kind
 }
 
-// Facts are what the app posts about a visitor, keyed by lower-case name.
+// Facts are a visitor's facts, keyed by lower-case name.
 type Facts map[string]string
 
 // DecodeConfig reads config.pb, or its JSON form, which rejects unknown fields.
@@ -110,12 +108,12 @@ func DecodeConfig(data []byte, asJSON bool) (*configv1.Config, error) {
 	return pb, proto.Unmarshal(data, pb)
 }
 
-// EncodeConfig writes config.pb. The output is deterministic, so equal configs get equal ETags.
+// EncodeConfig is deterministic, so equal configs get equal ETags.
 func EncodeConfig(pb *configv1.Config) ([]byte, error) {
 	return proto.MarshalOptions{Deterministic: true}.Marshal(pb)
 }
 
-// ParseConfig validates config.pb and turns it into a Config. It leaves pb unchanged.
+// ParseConfig validates pb and leaves it unchanged.
 func ParseConfig(pb *configv1.Config) (Config, error) {
 	layout, err := version.ParseLayout(cmp.Or(pb.DateFormat, version.Default.String()))
 	if err != nil {
@@ -159,7 +157,6 @@ func ParseConfig(pb *configv1.Config) (Config, error) {
 		if err == nil && ids[r.ID] {
 			err = errors.New("duplicate id")
 		}
-		// when.backend must compare the same shape, date or version, as the backend keys.
 		for _, cd := range r.conds {
 			other := slices.ContainsFunc(cd.cmps, func(b []bound) bool { return b[0].kind != backendKind })
 			if err == nil && cd.fact == "backend" && backendKind != version.Invalid && other {
@@ -175,8 +172,8 @@ func ParseConfig(pb *configv1.Config) (Config, error) {
 	return c, nil
 }
 
-// ParseFacts reads the JSON object the app posts. Names are case-insensitive, numbers keep
-// their exact text, and null means the fact is absent.
+// ParseFacts reads the posted JSON object: names are case-insensitive, numbers keep their text
+// and null means absent.
 func ParseFacts(data []byte) (Facts, error) {
 	var raw map[string]jsontext.Value
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -207,7 +204,6 @@ func ParseFacts(data []byte) (Facts, error) {
 	return f, nil
 }
 
-// lossy reports whether a number in When was too large to keep all its digits.
 func (r *Rule) lossy() bool {
 	return slices.ContainsFunc(r.conds, func(c cond) bool { return c.lossy })
 }
@@ -216,26 +212,58 @@ func (r *Rule) expired(now time.Time) bool {
 	return !r.Until.IsZero() && !now.Before(r.Until)
 }
 
-// skipped explains, for Explain, why Decide passed r over. runs is whether r's bundle can serve
-// this visitor.
-func (r *Rule) skipped(f Facts, now time.Time, runs bool) string {
+// Skip says why Explain passed a rule over; Fact and Value are the condition that failed.
+type Skip struct {
+	Rule    string
+	Reason  string
+	Fact    string
+	Value   string
+	Bucket  int
+	Percent int
+}
+
+func (r *Rule) skipped(f Facts, now time.Time) Skip {
 	switch {
 	case !r.Active:
-		return "inactive, see the issues"
+		return Skip{Rule: r.ID, Reason: "inactive"}
 	case r.expired(now):
-		return "expired"
+		return Skip{Rule: r.ID, Reason: "expired"}
 	}
 	for _, c := range r.conds {
-		if v, ok := f[c.fact]; !ok {
-			return "no " + c.fact + " fact"
-		} else if !c.match(v) {
-			return c.fact + " " + strconv.Quote(v) + " does not match"
+		v, ok := f[c.fact]
+		if !ok {
+			return Skip{Rule: r.ID, Reason: "no_fact", Fact: c.fact}
+		}
+		if !c.match(v) {
+			skip := Skip{Rule: r.ID, Reason: "no_match", Fact: c.fact, Value: v}
+			if c.pct > 0 {
+				skip.Bucket, skip.Percent = bucket(v), c.pct
+			}
+			return skip
 		}
 	}
-	if !runs {
-		return "bundle " + r.Bundle + " needs a newer native app"
+	// The rule matched, so its bundle cannot serve this visitor.
+	return Skip{Rule: r.ID, Reason: "needs_native"}
+}
+
+// Match is how a condition of the deciding rule held; a listed value holds whatever its bucket.
+type Match struct {
+	Fact    string
+	Value   string
+	Bucket  int
+	Percent int
+}
+
+func (r *Rule) held(f Facts) []Match {
+	out := make([]Match, 0, len(r.conds))
+	for _, c := range r.conds {
+		m := Match{Fact: c.fact, Value: f[c.fact]}
+		if c.pct > 0 {
+			m.Bucket, m.Percent = bucket(m.Value), c.pct
+		}
+		out = append(out, m)
 	}
-	return "matches"
+	return out
 }
 
 func (r *Rule) match(f Facts) bool {
@@ -267,7 +295,7 @@ func (c *cond) match(v string) bool {
 	return false
 }
 
-// bucket places v in a stable 0-99 slot, so raising a percentage only adds users.
+// bucket is stable, so raising a percentage only adds users.
 func bucket(v string) int {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(v))
@@ -351,11 +379,10 @@ func parseRule(i int, rf *configv1.Rule, layout version.Layout) (Rule, error) {
 	return r, nil
 }
 
-// masked stands in for a stored secret in configs sent to clients.
 const masked = "***"
 
-// Redacted is pb as clients see it. Secrets are masked. Blocked bundles and tokens are left
-// out: they have endpoints of their own, so they never change the ETag or add to history.
+// Redacted is pb as clients see it: secrets masked, blocked and tokens left out, since they have
+// calls of their own and must not change the ETag or history.
 func Redacted(pb *configv1.Config) *configv1.Config {
 	out := proto.CloneOf(pb)
 	out.Blocked, out.Tokens = nil, nil
@@ -368,15 +395,15 @@ func Redacted(pb *configv1.Config) *configv1.Config {
 	return out
 }
 
-// ETag hashes Redacted(pb), so an If-Match fails only on changes the client could have seen.
+// ETag hashes Redacted(pb), so a save fails only on changes the client could have seen.
 func ETag(pb *configv1.Config) string {
 	b, _ := EncodeConfig(Redacted(pb))
 	sum := sha256.Sum256(b)
-	return `"` + hex.EncodeToString(sum[:8]) + `"`
+	return hex.EncodeToString(sum[:8])
 }
 
-// KeepStored copies from cur what a client cannot send back: masked secrets, blocked bundles,
-// tokens, and the admin account when pb has no auth at all (an empty "auth": {} removes it).
+// KeepStored copies from cur what clients cannot send back. A missing auth keeps the stored
+// account; an empty "auth": {} removes it.
 func KeepStored(pb, cur *configv1.Config) {
 	pb.Blocked, pb.Tokens = cur.GetBlocked(), cur.GetTokens()
 	if pb.GetSource().GetSecretAccessKey() == masked {
@@ -390,8 +417,7 @@ func KeepStored(pb, cur *configv1.Config) {
 	}
 }
 
-// HashAuth replaces a new admin password with its hash. Call it just before writing: PBKDF2 is
-// slow on purpose, so validation skips it.
+// HashAuth runs just before writing: PBKDF2 is slow on purpose, so validation skips it.
 func HashAuth(pb *configv1.Config) {
 	if a := pb.GetAuth(); a.GetPassword() != "" {
 		a.PasswordHash, a.Password = HashPassword(a.Password), ""
@@ -462,7 +488,7 @@ func parseSource(f *configv1.Source) (Source, error) {
 	return s, nil
 }
 
-// parseUntil reads a date, meaning until that day ends in UTC, or an exact RFC 3339 time.
+// parseUntil reads a date, meaning the end of that day in UTC, or an RFC 3339 time.
 func parseUntil(s string) (time.Time, error) {
 	if t, err := time.Parse(time.DateOnly, s); err == nil {
 		return t.AddDate(0, 0, 1), nil
@@ -470,8 +496,6 @@ func parseUntil(s string) (time.Time, error) {
 	return time.Parse(time.RFC3339, s)
 }
 
-// parseCond reads one fact of When: a value or a list of values, each exact ("4.80.0"), a
-// percentage ("10%", "*" for all) or comparisons (">=2.0.0 <3.0.0").
 func parseCond(fact string, v jsontext.Value, layout version.Layout) (cond, error) {
 	c := cond{fact: fact, layout: layout, exact: map[string]struct{}{}}
 	items := []jsontext.Value{v}
@@ -516,8 +540,7 @@ func parseCond(fact string, v jsontext.Value, layout version.Layout) (cond, erro
 	return c, nil
 }
 
-// parseBounds reads comparisons separated by spaces, such as ">=2.0.0 <3.0.0", which must all
-// hold. The values decide whether versions or dates are compared.
+// parseBounds reads comparisons that must all hold, such as ">=2.0.0 <3.0.0".
 func parseBounds(s string, layout version.Layout) ([]bound, error) {
 	var out []bound
 	toks := strings.Fields(s)
@@ -549,7 +572,6 @@ func parseBounds(s string, layout version.Layout) ([]bound, error) {
 	return out, nil
 }
 
-// scalar returns a JSON string, number or boolean as text, and null as "".
 func scalar(v jsontext.Value) (string, error) {
 	switch v.Kind() {
 	case '"':
@@ -570,7 +592,6 @@ func scalar(v jsontext.Value) (string, error) {
 
 const nameChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
 
-// validName allows 1-64 of A-Z a-z 0-9 . _ -
 func validName(s string) bool {
 	return s != "" && len(s) <= 64 && strings.Trim(s, nameChars) == ""
 }

@@ -6,54 +6,49 @@ import "google/protobuf/struct.proto";
 
 option go_package = "github.com/zenkiet/bundle-pilot/internal/gen/configv1;configv1";
 
-// Config is the gateway's selection config, stored as config.pb: rules are
-// checked top to bottom, then the backend table, then the default bundle.
+// Config is config.pb: rules are checked top to bottom, then the backend table, then the default.
 message Config {
   string schema = 1 [json_name = "$schema"];
   Source source = 2;
-  // Date layout for backend keys, comparisons and posted facts; MM.dd.YYYY by default.
+  // MM.dd.YYYY by default.
   string date_format = 3;
-  // Bundle for visitors without a cookie and when nothing matches.
+  // For visitors without a cookie and when nothing matches.
   string default_bundle = 4 [json_name = "default"];
-  // Oldest backend version each bundle supports: "<backend>": "<bundle>".
+  // "<oldest backend>": "<bundle>".
   map<string, string> backend = 5;
   repeated Rule rules = 6;
   Auth auth = 7;
-  // Shown in the admin UI: browser tab and sidebar heading.
   string project_name = 8;
-  // Label next to the name, e.g. production.
+  // A label such as production.
   string environment = 9;
-  // Bundles never served: set through /__gateway/blocked, kept by every config save.
+  // Set by SetBlocked; every config save keeps them.
   repeated string blocked = 10;
-  // API tokens: set through /__gateway/tokens, kept by every config save.
+  // Set by CreateToken and DeleteToken; every config save keeps them.
   repeated Token tokens = 11;
 }
 
-// Token lets a script call the admin API with "Authorization: Bearer <secret>".
 message Token {
   string name = 1;
-  // read (status, config, history), upload (also adds bundles) or admin (everything).
+  // read, upload or admin.
   string scope = 2;
-  // SHA-256 of the secret, hex: the secret is shown once, when the token is made.
+  // Of the secret, hex; the secret is shown once.
   string sha256 = 3;
   // RFC 3339.
   string created = 4;
 }
 
-// Revision is one saved config in DIST/history, as clients see it: secrets masked.
+// Revision is one saved config in DIST/history, secrets masked.
 message Revision {
-  // Who saved it: the admin's username, token:<name>, setup or cli.
   string by = 1;
   // The Config, encoded.
   bytes config = 2;
 }
 
-// Auth protects /__gateway/* except /__gateway/data and /healthz with HTTP Basic auth.
 message Auth {
   string username = 1;
-  // pbkdf2-sha256, written by the gateway; masked as *** when read back.
+  // Masked as *** when read back.
   string password_hash = 2;
-  // Write-only: hashed into password_hash before config.pb is stored.
+  // Write-only: hashed into password_hash before saving.
   string password = 3;
 }
 
@@ -62,27 +57,27 @@ message Source {
   // "local" or "s3".
   string type = 1;
   string bucket = 2;
-  // Folder in the bucket holding the zips, e.g. prod/.
+  // Such as prod/.
   string prefix = 3;
-  // https://<ACCOUNT_ID>.r2.cloudflarestorage.com for R2; empty for AWS.
+  // Empty for AWS; https://<ACCOUNT_ID>.r2.cloudflarestorage.com for R2.
   string endpoint = 4;
   // auto for R2.
   string region = 5;
-  // Leave both keys empty to use the AWS credential chain.
+  // Leave both keys empty for the AWS credential chain.
   string access_key_id = 6;
   string secret_access_key = 7;
-  // How often the bucket is listed, a Go duration such as 30s.
+  // A Go duration, 30s by default.
   string poll = 8;
 }
 
 message Rule {
   string id = 1;
-  // Free text for operators, ignored by the gateway.
+  // For operators; the gateway ignores it.
   string note = 2;
-  // Every entry must match: {"fact": value} with a string, number, boolean or
-  // a list of them; "*", "N%" and "<", "<=", ">", ">=" comparisons are matchers.
+  // {"fact": value}, every entry must match. A value is a string, number, boolean or a list of
+  // them; "*", "N%" and <, <=, >, >= comparisons are matchers.
   google.protobuf.Struct when = 3;
   string bundle = 4;
-  // Expiry: YYYY-MM-DD (through the end of that UTC day) or an RFC 3339 time.
+  // YYYY-MM-DD (through that UTC day) or an RFC 3339 time.
   string until = 5;
 }

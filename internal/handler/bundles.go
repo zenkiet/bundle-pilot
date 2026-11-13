@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net/http"
@@ -10,22 +12,26 @@ import (
 	"strings"
 	"time"
 
+	"connectrpc.com/connect"
+
+	"github.com/zenkiet/bundle-pilot/internal/domain"
 	"github.com/zenkiet/bundle-pilot/internal/gen/configv1"
+	"github.com/zenkiet/bundle-pilot/internal/gen/gatewayv1"
 	"github.com/zenkiet/bundle-pilot/internal/pkg/version"
 )
 
 const maxZip = 256 << 20
 
-// putBundle stores the body as versions/<name>.zip and reloads.
 func (rt *Router) putBundle(w http.ResponseWriter, r *http.Request) {
 	v, ok := rt.zipVersion(r.PathValue("name"))
 	if !ok {
 		layout := rt.cat.Current().Config.Dates.String()
-		http.Error(w, "name must be <version>.zip, a version like 4.81.0 or a date like "+layout, http.StatusBadRequest)
+		problem(w, r, http.StatusBadRequest, "name must be <version>.zip, a version like 4.81.0 or a date like "+layout)
 		return
 	}
-	if scope(r) != "admin" && rt.cat.Current().Loaded(v) {
-		http.Error(w, v+" exists: replacing a bundle takes an admin", http.StatusConflict)
+	c := from(r.Context())
+	if c.scope != "admin" && rt.cat.Current().Loaded(v) {
+		problem(w, r, http.StatusConflict, v+" exists: replacing a bundle takes an admin")
 		return
 	}
 	size := r.ContentLength
@@ -36,15 +42,16 @@ func (rt *Router) putBundle(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	files, replaced, err := rt.cat.PutBundle(r.Context(), v, http.MaxBytesReader(w, r.Body, maxZip))
 	if err != nil {
-		status := http.StatusUnprocessableEntity
+		status, reason := http.StatusUnprocessableEntity, domain.RefusalReason(err)
 		if _, big := errors.AsType[*http.MaxBytesError](err); big {
-			status = http.StatusRequestEntityTooLarge
+			status, reason = http.StatusRequestEntityTooLarge, "too_large"
 		}
-		http.Error(w, err.Error(), status)
+		writeProblem(w, r, status, err.Error(), reason)
 		return
 	}
 	rt.log.Info("bundle uploaded",
-		"version", v, "files", files, "replaced", replaced, "by", actor(r), "remote", clientIP(r))
+		"version", v, "files", files, "replaced", replaced, "by", c.who, "remote", c.ip)
+	rt.cat.Record(domain.Event{Kind: "upload", By: c.who, Bundle: v})
 	writeJSON(w, http.StatusOK, struct {
 		Version  string `json:"version"`
 		Files    int    `json:"files"`
@@ -53,14 +60,14 @@ func (rt *Router) putBundle(w http.ResponseWriter, r *http.Request) {
 	}{Version: v, Files: files, Replaced: replaced, ReloadMs: time.Since(start).Milliseconds()})
 }
 
-// getBundle serves versions/<v>.zip, without auth: OTA updaters need its URL. Only the zip a
-// served bundle loaded from goes out, so a blocked or refused one cannot be installed.
+// getBundle needs no auth, for OTA updaters, and sends only zips that serve: a blocked or
+// refused one cannot be installed.
 func (rt *Router) getBundle(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	v, ok := rt.zipVersion(name)
 	b := rt.cat.Current().Bundle(v)
 	if !ok || b == nil {
-		http.NotFound(w, r)
+		problem(w, r, http.StatusNotFound, "no bundle "+name+" is served")
 		return
 	}
 	w.Header().Set("Content-Type", "application/zip")
@@ -69,17 +76,17 @@ func (rt *Router) getBundle(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, name, b.ModTime, io.NewSectionReader(b.Zip, 0, b.ZipBytes))
 }
 
-// getBundleFile serves one file of a bundle as zipped, the raw index.html included, for OTA
-// updaters fetching what its signed bundle.sha256 lists: no cookies, no index fallback.
+// getBundleFile serves files as zipped, the raw index.html included, for OTA updaters that check
+// them against bundle.sha256.
 func (rt *Router) getBundleFile(w http.ResponseWriter, r *http.Request) {
 	b := rt.cat.Current().Bundle(r.PathValue("version"))
 	if b == nil {
-		http.NotFound(w, r)
+		problem(w, r, http.StatusNotFound, "no bundle "+r.PathValue("version")+" is served")
 		return
 	}
 	a := b.File(path.Clean("/" + r.PathValue("path")))
 	if a == nil {
-		http.NotFound(w, r)
+		problem(w, r, http.StatusNotFound, "bundle "+b.Version+" has no such file")
 		return
 	}
 	w.Header()["X-Bundle-Version"] = b.Tag()
@@ -87,8 +94,6 @@ func (rt *Router) getBundleFile(w http.ResponseWriter, r *http.Request) {
 	a.ServeHTTP(w, r)
 }
 
-// zipVersion reads "<version>.zip", where version is a dotted version or a date in the
-// config's date format.
 func (rt *Router) zipVersion(name string) (string, bool) {
 	v, ok := strings.CutSuffix(name, ".zip")
 	if !ok || strings.HasPrefix(name, ".") {
@@ -97,42 +102,40 @@ func (rt *Router) zipVersion(name string) (string, bool) {
 	return v, rt.cat.Current().Config.Dates.Kind(v) != version.Invalid
 }
 
-// deleteBundle refuses the default bundle so the gateway never runs out of bundles.
 func (rt *Router) deleteBundle(w http.ResponseWriter, r *http.Request) {
 	v, ok := rt.zipVersion(r.PathValue("name"))
 	if !ok {
-		http.Error(w, "name must be <version>.zip", http.StatusBadRequest)
+		problem(w, r, http.StatusBadRequest, "name must be <version>.zip")
 		return
 	}
 	if rt.cat.Current().Default.Version == v {
-		http.Error(w, v+" is the default bundle; set another default first", http.StatusConflict)
+		problem(w, r, http.StatusConflict, v+" is the default bundle; set another default first")
 		return
 	}
 	err := rt.cat.DeleteBundle(r.Context(), v)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		http.Error(w, v+" is not on disk", http.StatusNotFound)
+		problem(w, r, http.StatusNotFound, v+" is not on disk")
 		return
 	case err != nil:
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		problem(w, r, http.StatusInternalServerError, err.Error())
 		return
 	}
-	rt.log.Info("bundle deleted", "version", v, "by", actor(r), "remote", clientIP(r))
+	c := from(r.Context())
+	rt.log.Info("bundle deleted", "version", v, "by", c.who, "remote", c.ip)
+	rt.cat.Record(domain.Event{Kind: "delete", By: c.who, Bundle: v})
 	w.WriteHeader(http.StatusNoContent)
 }
 
 var errServing = errors.New("serves as the default")
 
-// setBlocked blocks (PUT) or unblocks (DELETE) a bundle: it stays on disk, but nothing routes
-// to it. The blocked list is not part of the editable config, so no config save or revert
-// undoes it.
-func (rt *Router) setBlocked(w http.ResponseWriter, r *http.Request) {
-	v, on := r.PathValue("version"), r.Method == http.MethodPut
+// SetBlocked keeps the blocked list out of the editable config, so no save or revert undoes it.
+func (rt *Router) SetBlocked(ctx context.Context, req *connect.Request[gatewayv1.SetBlockedRequest]) (*connect.Response[gatewayv1.SetBlockedResponse], error) {
+	v, on, c := req.Msg.Version, req.Msg.Blocked, from(ctx)
 	if on && !rt.cat.Current().Loaded(v) {
-		http.Error(w, v+" is not loaded", http.StatusNotFound)
-		return
+		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("%s is not loaded", v))
 	}
-	err := rt.cat.UpdateConfig(actor(r), func(cur *configv1.Config) (*configv1.Config, error) {
+	_, err := rt.cat.UpdateConfig(c.who, func(cur *configv1.Config) (*configv1.Config, error) {
 		cur.Blocked = slices.DeleteFunc(cur.Blocked, func(b string) bool { return b == v })
 		if on {
 			if v == rt.cat.Current().Default.Version {
@@ -144,26 +147,15 @@ func (rt *Router) setBlocked(w http.ResponseWriter, r *http.Request) {
 	})
 	switch {
 	case errors.Is(err, errServing):
-		http.Error(w, v+" serves as the default: set another default first", http.StatusConflict)
-		return
+		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("%s serves as the default: set another default first", v))
 	case err != nil:
-		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
-		return
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	rt.log.Info("bundle blocked", "version", v, "blocked", on, "by", actor(r), "remote", clientIP(r))
-	w.WriteHeader(http.StatusNoContent)
-}
-
-func (rt *Router) reload(w http.ResponseWriter, _ *http.Request) {
-	start := time.Now()
-	err := rt.cat.Reload()
-	out := struct {
-		ReloadMs int64  `json:"reload_ms"`
-		Error    string `json:"error,omitempty"`
-	}{ReloadMs: time.Since(start).Milliseconds()}
-	status := http.StatusOK
-	if err != nil {
-		out.Error, status = err.Error(), http.StatusInternalServerError
+	rt.log.Info("bundle blocked", "version", v, "blocked", on, "by", c.who, "remote", c.ip)
+	kind := "unblock"
+	if on {
+		kind = "block"
 	}
-	writeJSON(w, status, out)
+	rt.cat.Record(domain.Event{Kind: kind, By: c.who, Bundle: v})
+	return connect.NewResponse(&gatewayv1.SetBlockedResponse{}), nil
 }

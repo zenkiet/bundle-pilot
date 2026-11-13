@@ -20,45 +20,46 @@ const (
 	revisionID    = "20060102T150405.000000000Z" // a save's time, which file names sort by
 )
 
-// record keeps pb in DIST/history as clients see it, so secrets and tokens never land there.
-// A save that changes nothing clients see (a token, a block, a password) adds no revision.
-// The first record also keeps old, so a revert can reach the config from before history began.
-func (s *Source) record(old *configv1.Config, oldAt time.Time, pb *configv1.Config, by string) error {
+// record keeps pb as clients see it, so secrets never land in history, and skips a save they
+// cannot see. The first record also keeps old, so a revert can reach the config before history.
+func (s *Source) record(old *configv1.Config, oldAt time.Time, pb *configv1.Config, by string) (string, error) {
 	if old != nil && domain.ETag(old) == domain.ETag(pb) {
-		return nil
+		return "", nil
 	}
 	if err := s.root.MkdirAll(historyDir, 0o700); err != nil {
-		return err
+		return "", err
 	}
 	ids, err := s.revisions()
 	if err == nil && len(ids) == 0 && old != nil {
-		if err := s.writeRevision(oldAt, "", old); err != nil {
-			return err
+		if _, err := s.writeRevision(oldAt, "", old); err != nil {
+			return "", err
 		}
 	}
-	if err := s.writeRevision(time.Now(), by, pb); err != nil {
-		return err
+	rev, err := s.writeRevision(time.Now(), by, pb)
+	if err != nil {
+		return "", err
 	}
 	ids, err = s.revisions()
 	for _, id := range ids[:max(0, len(ids)-keepRevisions)] { // oldest first
 		_ = s.root.Remove(path.Join(historyDir, id+".pb"))
 	}
-	return err
+	return rev, err
 }
 
-func (s *Source) writeRevision(at time.Time, by string, pb *configv1.Config) error {
+func (s *Source) writeRevision(at time.Time, by string, pb *configv1.Config) (string, error) {
 	cfg, err := domain.EncodeConfig(domain.Redacted(pb))
 	if err != nil {
-		return err
+		return "", err
 	}
 	b, err := proto.Marshal(&configv1.Revision{By: by, Config: cfg})
 	if err != nil {
-		return err
+		return "", err
 	}
-	return s.root.WriteFile(path.Join(historyDir, at.UTC().Format(revisionID)+".pb"), b, 0o600)
+	id := at.UTC().Format(revisionID)
+	return id, s.root.WriteFile(path.Join(historyDir, id+".pb"), b, 0o600)
 }
 
-// revisions lists the ids in DIST/history, oldest first.
+// revisions are oldest first.
 func (s *Source) revisions() ([]string, error) {
 	entries, err := fs.ReadDir(s.root.FS(), historyDir)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -73,20 +74,25 @@ func (s *Source) revisions() ([]string, error) {
 	return ids, err
 }
 
-// History lists the saved configs, newest first.
 func (s *Source) History() ([]domain.Revision, error) {
 	ids, err := s.revisions()
 	out := make([]domain.Revision, 0, len(ids))
 	for _, id := range slices.Backward(ids) {
-		if rev, err := s.readRevision(id); err == nil {
-			at, _ := time.Parse(revisionID, id)
-			out = append(out, domain.Revision{ID: id, At: at, By: rev.By})
+		rev, err := s.readRevision(id)
+		if err != nil {
+			continue
 		}
+		cfg, err := domain.DecodeConfig(rev.Config, false)
+		if err != nil {
+			continue
+		}
+		at, _ := time.Parse(revisionID, id)
+		out = append(out, domain.Revision{ID: id, At: at, By: rev.By, Config: cfg})
 	}
 	return out, err
 }
 
-// Revision returns one saved config, as clients see it; fs.ErrNotExist for an unknown id.
+// Revision returns fs.ErrNotExist for an unknown id.
 func (s *Source) Revision(id string) (*configv1.Config, error) {
 	rev, err := s.readRevision(id)
 	if err != nil {

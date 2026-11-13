@@ -5,33 +5,29 @@ import { CapacitorUpdater } from '@capgo/capacitor-updater';
 import { entries, verifyManifest } from './manifest.js';
 
 export interface OtaOptions {
-	/** The OTA gateway's origin, such as https://ota.example.com. */
+	/** Origin, such as https://ota.example.com. */
 	gateway: string;
-	/** Base64 Ed25519 public key that signs each bundle's bundle.sha256. */
+	/** Base64 Ed25519 key that signs bundle.sha256. */
 	publicKey: string;
 	/** The bundle this app runs. */
 	version: string;
-	/** 1 to 100 while an update downloads, smoothed so it never looks stuck; null when the update gives up. */
+	/** 1 to 100 while downloading; null when the update gives up. */
 	onProgress?: (percent: number | null) => void;
-	/** Awaited once the update is downloaded, right before the app reloads into it. */
+	/** Awaited right before the app reloads into the update. */
 	beforeSwitch?: () => unknown;
 }
 
 const TIMEOUT = 5000; // per request
 const DOWNLOAD_TIMEOUT = 60_000;
 
-// Kept from the app this code came from, so devices in the field keep their state.
+// Names kept from the original app, so devices in the field keep their state.
 const TRYING = 'ota.trying'; // the bundle set() is about to start
 const FAILED = 'ota.failed'; // a bundle Capgo rolled back: never offered again
 const MANIFEST = 'ota.manifest.'; // + bundle id: digest of the manifest it was downloaded with
 
 /**
- * A Pilot for native apps: asks the OTA gateway which bundle these facts get, verifies its signed
- * manifest, downloads it with Capgo and reloads into it. Off the native platform it always stays.
- *
- * One question per facts per session. The first check() for these facts waits for the answer, so an
- * update installs before the app goes on; once the answer needs no update, check() goes on at once.
- * A failure stays and is not retried that session.
+ * A Pilot for native apps: installs the bundle the gateway picks once its signed manifest checks out.
+ * The first check() for new facts waits for the answer; a failure is not retried that session.
  */
 export function createOtaPilot(o: OtaOptions): Pilot {
 	if (!Capacitor.isNativePlatform() || !o.gateway || !o.publicKey) return { version: o.version, check: () => true };
@@ -83,7 +79,7 @@ export function createOtaPilot(o: OtaOptions): Pilot {
 	};
 }
 
-/** Installs bundle v; resolves true to stay, and never resolves once the app reloads into it. */
+/** Resolves true to stay; never resolves once the app reloads into v. */
 async function install(api: string, o: OtaOptions, v: string): Promise<boolean> {
 	const base = `${api}/bundles/${encodeURIComponent(v)}`;
 	const [text, sig] = await Promise.all([fetchBytes(`${base}/bundle.sha256`), fetchBytes(`${base}/bundle.sha256.sig`)]);
@@ -92,7 +88,7 @@ async function install(api: string, o: OtaOptions, v: string): Promise<boolean> 
 	// Capgo keeps no checksum for manifest downloads: the manifest's digest names the bundle.
 	const digest = btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.digest('SHA-256', text as BufferSource))));
 
-	// Progress creeps toward 99 so the bar never looks stuck; real events pull it up, only the end reaches 100.
+	// Progress creeps toward 99 so the bar never looks stuck; only the end reaches 100.
 	let real = 0;
 	let shown = 1;
 	o.onProgress?.(shown);
@@ -131,8 +127,8 @@ async function install(api: string, o: OtaOptions, v: string): Promise<boolean> 
 }
 
 /**
- * Call once before bootstrapping: tells Capgo this bundle started, and remembers a bundle it rolled back.
- * failed() is for a bootstrap error: a bundle that started but cannot run would otherwise never roll back.
+ * Call once before bootstrapping, and failed() on a bootstrap error: a bundle that started but cannot
+ * run would otherwise never roll back.
  */
 export function startOta(version: string): { failed(): Promise<void> } {
 	if (!Capacitor.isNativePlatform()) return { failed: async () => {} };
@@ -150,7 +146,7 @@ export function startOta(version: string): { failed(): Promise<void> } {
 	};
 }
 
-// Android's text mode drops the last newline, which breaks the signature: fetch bytes (base64).
+// Android's text mode drops the last newline, breaking the signature: fetch bytes.
 async function fetchBytes(url: string): Promise<Uint8Array | undefined> {
 	const res = await CapacitorHttp.get({ url, responseType: 'arraybuffer', connectTimeout: TIMEOUT, readTimeout: TIMEOUT });
 	return res.status === 200 && typeof res.data === 'string' ? bytes(res.data) : undefined;

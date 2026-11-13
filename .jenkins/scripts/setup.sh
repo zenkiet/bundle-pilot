@@ -9,5 +9,4 @@ done
 
 log "Dependencies"
 go mod download
-(cd frontend && pnpm install --frozen-lockfile)
 (cd libs && pnpm install --frozen-lockfile)

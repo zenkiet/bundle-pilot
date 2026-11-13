@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json/v2"
 	"io"
 	"maps"
@@ -9,38 +10,42 @@ import (
 	"net/url"
 	"runtime/debug"
 	"runtime/metrics"
+	"slices"
 	"time"
 
+	"connectrpc.com/connect"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
 	"github.com/zenkiet/bundle-pilot/internal/domain"
+	"github.com/zenkiet/bundle-pilot/internal/gen/gatewayv1"
 )
 
 const maxFactsBody = 4 << 10
 
-// data decides the bundle for the posted facts and applies it.
 func (rt *Router) data(w http.ResponseWriter, r *http.Request) {
 	snap := rt.cat.Current()
 	if len(snap.Bundles()) == 0 {
-		http.Error(w, "no bundle deployed yet", http.StatusServiceUnavailable)
+		problem(w, r, http.StatusServiceUnavailable, "no bundle deployed yet")
 		return
 	}
 	if mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); mt != "application/json" {
-		http.Error(w, "send Content-Type: application/json", http.StatusUnsupportedMediaType)
+		problem(w, r, http.StatusUnsupportedMediaType, "send Content-Type: application/json")
 		return
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxFactsBody))
 	if err != nil {
-		http.Error(w, "facts body over 4 KiB", http.StatusRequestEntityTooLarge)
+		problem(w, r, http.StatusRequestEntityTooLarge, "facts body over 4 KiB")
 		return
 	}
 	facts, err := domain.ParseFacts(body)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		problem(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
 	b, via, err := snap.Decide(facts, time.Now())
 	if err != nil {
 		rt.count("refused", "") // fail-closed answers stop OTA updates: keep them visible
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		problem(w, r, http.StatusBadRequest, err.Error())
 		return
 	}
 	rt.apply(w, r, snap, b, via)
@@ -50,8 +55,7 @@ func (rt *Router) data(w http.ResponseWriter, r *http.Request) {
 	}{b.Version, via})
 }
 
-// apply pins a decision in the cookie and counts it; a default decision
-// clears the cookie so later default changes apply.
+// apply pins a decision in the cookie; a default one clears it, so later default changes apply.
 func (rt *Router) apply(w http.ResponseWriter, r *http.Request, snap *domain.Snapshot, b *domain.Bundle, via string) {
 	cookie := cookieValue(r, cookieName)
 	_, cur := snap.Pick("", cookie)
@@ -67,7 +71,6 @@ func (rt *Router) apply(w http.ResponseWriter, r *http.Request, snap *domain.Sna
 	}
 }
 
-// count tallies a decision by how it was made and by the bundle it chose.
 func (rt *Router) count(via, bundle string) {
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
@@ -75,10 +78,9 @@ func (rt *Router) count(via, bundle string) {
 	if bundle != "" {
 		rt.byBundle[bundle]++
 	}
+	rt.traffic.add(time.Now(), via, bundle)
 }
 
-// cookieFacts reads the facts the SDK keeps in a cookie after each sync, so
-// index.html can be decided on the first byte instead of after a /data call.
 func cookieFacts(r *http.Request) domain.Facts {
 	c, err := r.Cookie(factsCookie)
 	if err != nil {
@@ -95,99 +97,109 @@ func cookieFacts(r *http.Request) domain.Facts {
 	return f
 }
 
-type bundleStatus struct {
-	Version  string    `json:"version"`
-	Files    int       `json:"files"`
-	ZipBytes int64     `json:"zip_bytes"`
-	ModTime  time.Time `json:"mod_time"`
-	Native   string    `json:"native,omitempty"`
-	Blocked  bool      `json:"blocked,omitzero"`
-}
-
-type syncStatus struct {
-	At      time.Time `json:"at"`
-	Objects int       `json:"objects"`
-	Error   string    `json:"error"`
-}
-
 var (
 	started = time.Now()
 	build   string // set at release: -ldflags "-X github.com/zenkiet/bundle-pilot/internal/handler.build=1.2.3"
 )
 
-// init falls back to the version Go stamps from git, for builds made by hand.
+// Builds made by hand get the version Go stamps from git.
 func init() {
 	if bi, ok := debug.ReadBuildInfo(); ok && build == "" {
 		build = bi.Main.Version
 	}
 }
 
-func (rt *Router) status(w http.ResponseWriter, _ *http.Request) {
+func (rt *Router) GetInfo(context.Context, *connect.Request[gatewayv1.GetInfoRequest]) (*connect.Response[gatewayv1.GetInfoResponse], error) {
+	snap := rt.cat.Current()
+	return connect.NewResponse(&gatewayv1.GetInfoResponse{
+		Version:       build,
+		SetupRequired: snap.Setup != "",
+		PasswordSet:   snap.Config.Auth.Hash != "",
+	}), nil
+}
+
+func (rt *Router) GetStatus(context.Context, *connect.Request[gatewayv1.GetStatusRequest]) (*connect.Response[gatewayv1.GetStatusResponse], error) {
+	return connect.NewResponse(rt.status()), nil
+}
+
+func (rt *Router) status() *gatewayv1.GetStatusResponse {
 	snap := rt.cat.Current()
 	reloads, lastErr := rt.cat.Stats()
 	rt.mu.Lock()
 	byVia, byBundle := maps.Clone(rt.byVia), maps.Clone(rt.byBundle)
+	traffic := rt.traffic.series(time.Now())
 	rt.mu.Unlock()
-	out := struct {
-		Version           string            `json:"version"`
-		StartedAt         time.Time         `json:"started_at"`
-		Project           string            `json:"project_name"`
-		Environment       string            `json:"environment"`
-		Setup             bool              `json:"setup_required"`
-		Auth              bool              `json:"auth"`
-		Default           string            `json:"default"`
-		DefaultFrom       string            `json:"default_from"`
-		BasePath          string            `json:"base_path"`
-		Source            string            `json:"source"`
-		Sync              *syncStatus       `json:"sync,omitempty"`
-		Signing           bool              `json:"signing"`
-		LoadedAt          time.Time         `json:"loaded_at"`
-		Reloads           uint64            `json:"reloads"`
-		LastError         string            `json:"last_error"`
-		Errors            []string          `json:"errors"`
-		Resident          uint64            `json:"resident_bytes"`
-		Bundles           []bundleStatus    `json:"bundles"`
-		Decisions         map[string]uint64 `json:"decisions"`
-		DecisionsByBundle map[string]uint64 `json:"decisions_by_bundle"`
-		Issues            []string          `json:"issues"`
-	}{
+	out := &gatewayv1.GetStatusResponse{
 		Version:           build,
-		StartedAt:         started,
-		Project:           snap.Config.Project,
+		StartedAt:         timestamppb.New(started),
+		ProjectName:       snap.Config.Project,
 		Environment:       snap.Config.Environment,
-		Setup:             snap.Setup != "",
-		Auth:              snap.Config.Auth.Hash != "",
-		Default:           snap.Default.Version,
+		SetupRequired:     snap.Setup != "",
+		PasswordSet:       snap.Config.Auth.Hash != "",
+		DefaultBundle:     snap.Default.Version,
 		DefaultFrom:       snap.DefaultFrom,
 		BasePath:          snap.BasePath,
 		Source:            snap.Config.Source.String(),
 		Signing:           snap.Signed,
-		LoadedAt:          snap.LoadedAt,
+		LoadedAt:          timestamppb.New(snap.LoadedAt),
 		Reloads:           reloads,
 		LastError:         lastErr,
-		Errors:            snap.Errors,
-		Resident:          resident(),
+		Errors:            issues(snap.Errors),
+		ResidentBytes:     resident(),
 		Decisions:         byVia,
 		DecisionsByBundle: byBundle,
-		Issues:            snap.Issues,
+		Issues:            issues(snap.Issues),
+		Traffic:           traffic,
 	}
 	if at, objects, syncErr := rt.cat.SyncState(); !at.IsZero() {
-		out.Sync = &syncStatus{At: at, Objects: objects, Error: syncErr}
+		out.Sync = &gatewayv1.Sync{At: timestamppb.New(at), Objects: int64(objects), Error: syncErr}
 	}
+	uploaders := rt.uploaders()
 	for _, b := range snap.Bundles() {
-		out.Bundles = append(out.Bundles, bundleStatus{
-			Version:  b.Version,
-			Files:    b.Len(),
-			ZipBytes: b.ZipBytes,
-			ModTime:  b.ModTime,
-			Native:   b.Native,
-			Blocked:  snap.Bundle(b.Version) == nil,
+		out.Bundles = append(out.Bundles, &gatewayv1.Bundle{
+			Version:    b.Version,
+			Files:      int64(b.Len()),
+			ZipBytes:   b.ZipBytes,
+			ModTime:    timestamppb.New(b.ModTime),
+			Native:     b.Native,
+			Blocked:    slices.Contains(snap.Config.Blocked, b.Version),
+			Served:     snap.Bundle(b.Version) != nil,
+			Sha256:     b.SHA256,
+			UploadedBy: uploaders[b.Version],
 		})
 	}
-	writeJSON(w, http.StatusOK, out)
+	return out
 }
 
-// resident is the memory the Go runtime holds from the OS; bundle bytes live in the page cache.
+// uploaders is who last uploaded each zip, as far back as the activity feed goes.
+func (rt *Router) uploaders() map[string]string {
+	by := map[string]string{}
+	for _, e := range rt.cat.Events(0, maxEvents) { // oldest first, so the latest upload wins
+		if e.Kind == "upload" || e.Kind == "fetch" {
+			by[e.Bundle] = e.By
+		}
+	}
+	return by
+}
+
+func issues(in []domain.Issue) []*gatewayv1.Issue {
+	out := make([]*gatewayv1.Issue, 0, len(in))
+	for _, i := range in {
+		out = append(out, &gatewayv1.Issue{Code: i.Code, Text: i.Text, Rule: i.Rule, Bundle: i.Bundle, Reason: i.Reason})
+	}
+	return out
+}
+
+func (rt *Router) Reload(ctx context.Context, _ *connect.Request[gatewayv1.ReloadRequest]) (*connect.Response[gatewayv1.ReloadResponse], error) {
+	start := time.Now()
+	if err := rt.cat.Reload(); err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	rt.cat.Record(domain.Event{Kind: "reload", By: from(ctx).who})
+	return connect.NewResponse(&gatewayv1.ReloadResponse{ReloadMs: time.Since(start).Milliseconds()}), nil
+}
+
+// resident leaves out the zips, which live in the page cache.
 func resident() uint64 {
 	s := []metrics.Sample{{Name: "/memory/classes/total:bytes"}, {Name: "/memory/classes/heap/released:bytes"}}
 	metrics.Read(s)

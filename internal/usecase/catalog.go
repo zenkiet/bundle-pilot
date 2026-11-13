@@ -23,16 +23,19 @@ type Source interface {
 	Stamp() uint64
 	Load() (domain.Inventory, error)
 	ReadConfig() (*configv1.Config, error)
-	WriteConfig(pb *configv1.Config, by string) error
+	WriteConfig(pb *configv1.Config, by string) (revision string, err error)
 	History() ([]domain.Revision, error)
 	Revision(id string) (*configv1.Config, error)
 	PutBundle(ctx context.Context, name string, r io.Reader) (files int, replaced bool, err error)
 	DeleteBundle(ctx context.Context, name string) error
 	SyncState() (at time.Time, objects int, lastErr string)
+	Record(e domain.Event)
+	Events(after int64, limit int) []domain.Event
 }
 
-// Catalog holds the snapshot being served. Every change to what is stored (config saves,
-// uploads, deletes) goes through it and ends with a reload.
+var errFirstAdmin = errors.New("finish setup first: save a config that sets the admin username and password")
+
+// Catalog holds the served snapshot; every stored change goes through it and ends with a reload.
 type Catalog struct {
 	src       Source
 	log       *slog.Logger
@@ -58,7 +61,7 @@ func (c *Catalog) Stats() (reloads uint64, lastErr string) {
 	return c.reloads.Load(), lastErr
 }
 
-// Config returns config.pb as stored, secrets included; an empty one before the first save.
+// Config includes secrets; it is empty before the first save.
 func (c *Catalog) Config() (*configv1.Config, error) {
 	pb, err := c.src.ReadConfig()
 	if errors.Is(err, fs.ErrNotExist) {
@@ -67,12 +70,10 @@ func (c *Catalog) Config() (*configv1.Config, error) {
 	return pb, err
 }
 
-// UpdateConfig applies edit to the stored config, validates the result, saves it as by and
-// reloads. Updates run one at a time, so two read-modify-writes cannot lose each other. A
-// config.pb that cannot be read is never overwritten, because it holds the admin account. A
-// reload that fails after the save is only logged: it shows as the last error, and the watcher
-// retries it.
-func (c *Catalog) UpdateConfig(by string, edit func(cur *configv1.Config) (*configv1.Config, error)) error {
+// UpdateConfig runs one at a time, so read-modify-writes cannot lose each other, and never
+// overwrites an unreadable config.pb, which holds the admin account. It returns the revision id,
+// "" when the save made none.
+func (c *Catalog) UpdateConfig(by string, edit func(cur *configv1.Config) (*configv1.Config, error)) (string, error) {
 	c.writing.Lock()
 	defer c.writing.Unlock()
 	cur, err := c.src.ReadConfig()
@@ -81,35 +82,39 @@ func (c *Catalog) UpdateConfig(by string, edit func(cur *configv1.Config) (*conf
 	case errors.Is(err, fs.ErrNotExist) && firstSave:
 		cur = &configv1.Config{}
 	case errors.Is(err, fs.ErrNotExist):
-		return errors.New("config.pb is missing: restore it, or restart the gateway to run setup again")
+		return "", errors.New("config.pb is missing: restore it, or restart the gateway to run setup again")
 	case err != nil:
-		return fmt.Errorf("config.pb is unreadable, so it is not overwritten: %w", err)
+		return "", fmt.Errorf("config.pb is unreadable, so it is not overwritten: %w", err)
 	}
 	next, err := edit(cur)
 	if err == nil {
 		_, err = domain.ParseConfig(next)
 	}
 	if err != nil {
-		return err
+		return "", err
+	}
+	// The first save ends setup and the setup token with it: without an admin account the
+	// admin API would be left open to anyone.
+	if firstSave && next.GetAuth().GetUsername() == "" {
+		return "", errFirstAdmin
 	}
 	domain.HashAuth(next)
-	if err := c.src.WriteConfig(next, by); err != nil {
-		return err
+	rev, err := c.src.WriteConfig(next, by)
+	if err != nil {
+		return "", err
 	}
 	if err := c.Reload(); err != nil {
 		c.log.Error("config saved, but the reload failed, keeping previous snapshot", "error", err)
 	}
-	return nil
+	return rev, nil
 }
 
-// History lists the saved configs, newest first.
+// History is newest first.
 func (c *Catalog) History() ([]domain.Revision, error) { return c.src.History() }
 
-// Revision returns one saved config, as clients see it.
 func (c *Catalog) Revision(id string) (*configv1.Config, error) { return c.src.Revision(id) }
 
-// PutBundle stores an uploaded zip and reloads. The upload itself runs outside the reload
-// lock, so a slow client never blocks the watcher.
+// PutBundle stores outside the reload lock, so a slow upload never blocks the watcher.
 func (c *Catalog) PutBundle(ctx context.Context, name string, r io.Reader) (files int, replaced bool, err error) {
 	if files, replaced, err = c.src.PutBundle(ctx, name, r); err == nil {
 		err = c.Reload()
@@ -126,8 +131,12 @@ func (c *Catalog) DeleteBundle(ctx context.Context, name string) error {
 
 func (c *Catalog) SyncState() (at time.Time, objects int, lastErr string) { return c.src.SyncState() }
 
-// Reload loads the source again and swaps in the new snapshot. On error the current snapshot
-// keeps serving.
+func (c *Catalog) Record(e domain.Event) { c.src.Record(e) }
+
+// Events is oldest first; after 0 gives the newest.
+func (c *Catalog) Events(after int64, limit int) []domain.Event { return c.src.Events(after, limit) }
+
+// Reload keeps the current snapshot serving on error.
 func (c *Catalog) Reload() error {
 	c.reloading.Lock()
 	defer c.reloading.Unlock()
@@ -158,10 +167,10 @@ func (c *Catalog) reload() error {
 	snap := domain.NewSnapshot(inv, time.Now(), prevDefault)
 	c.cur.Store(snap)
 	for _, e := range snap.Errors {
-		c.log.Error(e)
+		c.log.Error(e.Text, "code", e.Code)
 	}
 	for _, issue := range snap.Issues {
-		c.log.Warn(issue)
+		c.log.Warn(issue.Text, "code", issue.Code)
 	}
 	versions := make([]string, 0, len(snap.Bundles()))
 	for _, b := range snap.Bundles() {
@@ -181,8 +190,7 @@ func (c *Catalog) reload() error {
 	return nil
 }
 
-// Watch reloads after any change on disk. A failure that may clear by itself is retried with
-// a backoff that doubles up to a minute.
+// Watch retries a failure that may clear by itself, backing off up to a minute.
 func (c *Catalog) Watch(ctx context.Context, every time.Duration) {
 	t := time.NewTicker(every)
 	defer t.Stop()

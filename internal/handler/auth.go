@@ -3,6 +3,8 @@ package handler
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
+	"fmt"
 	"maps"
 	"net/http"
 	"net/netip"
@@ -11,176 +13,256 @@ import (
 	"sync"
 	"time"
 
+	"connectrpc.com/connect"
+	"golang.org/x/time/rate"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
 	"github.com/zenkiet/bundle-pilot/internal/domain"
+	"github.com/zenkiet/bundle-pilot/internal/gen/gatewayv1"
+	"github.com/zenkiet/bundle-pilot/internal/gen/gatewayv1/gatewayv1connect"
 )
 
-// caller is who sent a request and what they may do, kept in its context.
-type caller struct{ who, scope string }
+type caller struct {
+	who, scope string
+	ip         netip.Addr
+	exp        time.Time // login tokens only
+}
 
 type callerKey struct{}
 
-// verifying caps concurrent PBKDF2 checks so failed sign-ins cannot starve serving.
-var verifying = make(chan struct{}, 2)
-
-// Sign-in backoff: the first failFree wrong passwords in a row are free. After that an address
-// waits 1 s before its next try is even checked, doubling each time up to failMax. Failures
-// older than failMax are forgotten.
-const (
-	failFree = 5
-	failMax  = 15 * time.Minute
-)
-
-type failure struct {
-	n    int
-	last time.Time
+func withCaller(ctx context.Context, c caller) context.Context {
+	return context.WithValue(ctx, callerKey{}, c)
 }
 
-type failures struct {
-	mu sync.Mutex
-	m  map[netip.Prefix]failure
+func from(ctx context.Context) caller {
+	c, _ := ctx.Value(callerKey{}).(caller)
+	return c
 }
 
-// wait is how long key must still wait before its next sign-in is checked.
-func (f *failures) wait(key netip.Prefix, now time.Time) time.Duration {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	e := f.m[key]
-	if e.n < failFree {
-		return 0
+// needs is each call's scope, "" for none; a call missing here takes admin.
+var needs = map[string]string{
+	gatewayv1connect.GatewayServiceGetInfoProcedure:        "",
+	gatewayv1connect.GatewayServiceLoginProcedure:          "",
+	gatewayv1connect.GatewayServiceRefreshSessionProcedure: "", // it checks its token itself
+	gatewayv1connect.GatewayServiceWhoAmIProcedure:         "read",
+	gatewayv1connect.GatewayServiceGetStatusProcedure:      "read",
+	gatewayv1connect.GatewayServiceWatchProcedure:          "read",
+	gatewayv1connect.GatewayServiceListEventsProcedure:     "read",
+	gatewayv1connect.GatewayServiceGetConfigProcedure:      "read",
+	gatewayv1connect.GatewayServiceCheckConfigProcedure:    "read",
+	gatewayv1connect.GatewayServiceDecideProcedure:         "read",
+	gatewayv1connect.GatewayServiceListHistoryProcedure:    "read",
+	gatewayv1connect.GatewayServiceGetRevisionProcedure:    "read",
+}
+
+// authorize keeps the API open until a password is set; during first-run setup, writes also need
+// the setup token. Credentials are headers the client sets, never cookies, so another site's page
+// cannot borrow them.
+func (rt *Router) authorize(h http.Header, ip netip.Addr, need string) (caller, *connect.Error) {
+	snap := rt.cat.Current()
+	a := snap.Config.Auth
+	if a.Hash == "" {
+		if snap.Setup == "" {
+			return caller{who: "anonymous", scope: "admin", ip: ip}, nil
+		}
+		tokenOK := subtle.ConstantTimeCompare([]byte(h.Get("X-Setup-Token")), []byte(snap.Setup)) == 1
+		if need != "read" && !tokenOK {
+			return caller{}, connect.NewError(connect.CodePermissionDenied,
+				errors.New("setup token required: the gateway printed it to its log"))
+		}
+		scope := "read" // so WhoAmI tells a setup wizard whether its token is right
+		if tokenOK {
+			scope = "admin"
+		}
+		return caller{who: "setup", scope: scope, ip: ip}, nil
 	}
-	doublings := min(e.n-failFree, 10) // 2^10 s is already past failMax; the cap keeps the shift small
-	delay := min(time.Second<<doublings, failMax)
-	return e.last.Add(delay).Sub(now)
+
+	secret, ok := strings.CutPrefix(h.Get("Authorization"), "Bearer ")
+	if !ok {
+		return caller{}, connect.NewError(connect.CodeUnauthenticated, errors.New("sign in required"))
+	}
+	if strings.HasPrefix(secret, "v4.local.") {
+		exp, ok := a.SessionExpiry(secret)
+		if !ok {
+			return caller{}, connect.NewError(connect.CodeUnauthenticated, errors.New("login expired or ended: sign in again"))
+		}
+		return caller{who: a.Username, scope: "admin", ip: ip, exp: exp}, nil
+	}
+	t, found := snap.Config.Token(secret)
+	switch {
+	case !found:
+		rt.log.Warn("unknown token", "remote", ip)
+		return caller{}, connect.NewError(connect.CodeUnauthenticated, errors.New("unknown token"))
+	case !domain.Allows(t.Scope, need):
+		return caller{}, connect.NewError(connect.CodePermissionDenied,
+			fmt.Errorf("token %s has scope %s, this needs %s", t.Name, t.Scope, need))
+	}
+	return caller{who: "token:" + t.Name, scope: t.Scope, ip: ip}, nil
 }
 
-// add counts a wrong password from key. Failures past failMax go first, which also bounds the
-// map by what the two PBKDF2 slots can check in that time.
-func (f *failures) add(key netip.Prefix, now time.Time) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	maps.DeleteFunc(f.m, func(_ netip.Prefix, e failure) bool { return now.Sub(e.last) > failMax })
-	f.m[key] = failure{n: f.m[key].n + 1, last: now}
+type authInterceptor struct{ rt *Router }
+
+func (i authInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
+	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+		ctx, err := i.rt.authorizeCall(ctx, req.Spec(), req.Peer(), req.Header())
+		if err != nil {
+			return nil, err
+		}
+		return next(ctx, req)
+	}
 }
 
-func (f *failures) forget(key netip.Prefix) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	delete(f.m, key)
+func (i authInterceptor) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
+	return func(ctx context.Context, conn connect.StreamingHandlerConn) error {
+		ctx, err := i.rt.authorizeCall(ctx, conn.Spec(), conn.Peer(), conn.RequestHeader())
+		if err != nil {
+			return err
+		}
+		return next(ctx, conn)
+	}
 }
 
-// auth runs next only for a request allowed to do what scope need requires:
-//   - Until an admin password is set, every request is admin. During first-run setup (no
-//     config.pb yet), writes also need the setup token printed to the log.
-//   - After that, a request needs a Bearer token with enough scope, or the admin's HTTP Basic
-//     credentials. The last Basic header that passed is remembered, so UI polls skip PBKDF2.
-//
-// No browser adds these credentials by itself: they come from a header the admin UI sets, never
-// a cookie, so another site's page cannot borrow them.
+func (authInterceptor) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {
+	return next
+}
+
+func (rt *Router) authorizeCall(ctx context.Context, spec connect.Spec, peer connect.Peer, h http.Header) (context.Context, error) {
+	ip := clientIP(peer.Addr, h)
+	need, listed := needs[spec.Procedure]
+	if !listed {
+		need = "admin"
+	}
+	if need == "" {
+		return withCaller(ctx, caller{ip: ip}), nil
+	}
+	c, err := rt.authorize(h, ip, need)
+	if err != nil {
+		return ctx, err
+	}
+	return withCaller(ctx, c), nil
+}
+
 func (rt *Router) auth(need string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		snap := rt.cat.Current()
-		a := snap.Config.Auth
-
-		if a.Hash == "" {
-			who := "anonymous"
-			if snap.Setup != "" {
-				dryRun := r.Pattern == "PUT /__gateway/config" && r.Header.Get("X-Dry-Run") != ""
-				tokenOK := subtle.ConstantTimeCompare([]byte(r.Header.Get("X-Setup-Token")), []byte(snap.Setup)) == 1
-				if r.Method != http.MethodGet && !dryRun && !tokenOK {
-					http.Error(w, "setup token required: the gateway printed it to its log", http.StatusForbidden)
-					return
-				}
-				who = "setup"
+		c, err := rt.authorize(r.Header, clientIP(r.RemoteAddr, r.Header), need)
+		if err != nil {
+			status := http.StatusForbidden
+			if err.Code() == connect.CodeUnauthenticated {
+				status = http.StatusUnauthorized
 			}
-			next(w, as(r, who, "admin"))
+			problem(w, r, status, err.Message())
 			return
 		}
-
-		h := r.Header.Get("Authorization")
-		if secret, ok := strings.CutPrefix(h, "Bearer "); ok {
-			t, found := snap.Config.Token(secret)
-			switch {
-			case !found:
-				rt.log.Warn("unknown token", "remote", clientIP(r))
-				http.Error(w, "unknown token", http.StatusUnauthorized)
-			case !domain.Allows(t.Scope, need):
-				http.Error(w, "token "+t.Name+" has scope "+t.Scope+", this needs "+need, http.StatusForbidden)
-			default:
-				next(w, as(r, "token:"+t.Name, t.Scope))
-			}
-			return
-		}
-
-		// Backoff comes before the remembered header, or a blocked address could keep guessing
-		// against it for free.
-		key := clientKey(clientIP(r))
-		if d := rt.failures.wait(key, time.Now()); d > 0 {
-			w.Header().Set("Retry-After", strconv.Itoa(int(d.Seconds())+1))
-			http.Error(w, "too many wrong passwords from this address: retry later", http.StatusTooManyRequests)
-			return
-		}
-		// Keyed by the hash too, so a password change ends the remembered sign-in.
-		if s := rt.session.Load(); s != nil && subtle.ConstantTimeCompare([]byte(*s), []byte(a.Hash+h)) == 1 {
-			next(w, as(r, a.Username, "admin"))
-			return
-		}
-		user, pw, ok := r.BasicAuth()
-		if !ok {
-			http.Error(w, "sign in required", http.StatusUnauthorized)
-			return
-		}
-		select {
-		case verifying <- struct{}{}:
-		default:
-			http.Error(w, "too many sign-in attempts, retry shortly", http.StatusTooManyRequests)
-			return
-		}
-		good := domain.VerifyPassword(a.Hash, pw) // checked even for a wrong username, so timing does not reveal it
-		<-verifying
-		if good && subtle.ConstantTimeCompare([]byte(user), []byte(a.Username)) == 1 {
-			rt.failures.forget(key)
-			rt.session.Store(new(a.Hash + h))
-			next(w, as(r, a.Username, "admin"))
-			return
-		}
-		rt.failures.add(key, time.Now())
-		rt.log.Warn("sign-in failed", "remote", key)
-		http.Error(w, "sign in required", http.StatusUnauthorized)
+		next(w, r.WithContext(withCaller(r.Context(), c)))
 	}
 }
 
-// as records who sent r and their scope.
-func as(r *http.Request, who, scope string) *http.Request {
-	return r.WithContext(context.WithValue(r.Context(), callerKey{}, caller{who, scope}))
+// verifying caps concurrent PBKDF2 checks so a flood of logins cannot starve serving.
+var verifying = make(chan struct{}, 2)
+
+func (rt *Router) Login(ctx context.Context, req *connect.Request[gatewayv1.LoginRequest]) (*connect.Response[gatewayv1.LoginResponse], error) {
+	a := rt.cat.Current().Config.Auth
+	if a.Hash == "" {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("no admin password yet: finish setup first"))
+	}
+	ip := from(ctx).ip
+	key := clientKey(ip)
+	if d := rt.logins.wait(key, time.Now()); d > 0 {
+		err := connect.NewError(connect.CodeResourceExhausted, errors.New("too many wrong passwords from this address: retry later"))
+		err.Meta().Set("Retry-After", strconv.Itoa(int(d.Seconds())+1))
+		return nil, err
+	}
+	select {
+	case verifying <- struct{}{}:
+	default:
+		return nil, connect.NewError(connect.CodeResourceExhausted, errors.New("too many logins at once, retry shortly"))
+	}
+	good := domain.VerifyPassword(a.Hash, req.Msg.Password) // checked even for a wrong username, so timing does not reveal it
+	<-verifying
+	if !good || subtle.ConstantTimeCompare([]byte(req.Msg.Username), []byte(a.Username)) != 1 {
+		rt.logins.fail(key, time.Now())
+		rt.log.Warn("login failed", "remote", ip)
+		return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("wrong username or password"))
+	}
+	rt.logins.forget(key)
+	token, exp := a.Session(time.Now())
+	rt.log.Info("login", "user", a.Username, "remote", ip)
+	return connect.NewResponse(&gatewayv1.LoginResponse{Token: token, ExpiresAt: timestamppb.New(exp)}), nil
 }
 
-// actor is who sent r, for audit logs: the admin's username, "token:<name>", "setup" during
-// first run, or "anonymous" while no password is set.
-func actor(r *http.Request) string {
-	c, _ := r.Context().Value(callerKey{}).(caller)
-	return c.who
+func (rt *Router) RefreshSession(_ context.Context, req *connect.Request[gatewayv1.RefreshSessionRequest]) (*connect.Response[gatewayv1.RefreshSessionResponse], error) {
+	secret, _ := strings.CutPrefix(req.Header().Get("Authorization"), "Bearer ")
+	token, exp, err := rt.cat.Current().Config.Auth.Refresh(secret, time.Now())
+	if err != nil {
+		return nil, connect.NewError(connect.CodeUnauthenticated, err)
+	}
+	return connect.NewResponse(&gatewayv1.RefreshSessionResponse{Token: token, ExpiresAt: timestamppb.New(exp)}), nil
 }
 
-// scope is what the sender of r may do: read, upload or admin.
-func scope(r *http.Request) string {
-	c, _ := r.Context().Value(callerKey{}).(caller)
-	return c.scope
+func (rt *Router) WhoAmI(ctx context.Context, _ *connect.Request[gatewayv1.WhoAmIRequest]) (*connect.Response[gatewayv1.WhoAmIResponse], error) {
+	c := from(ctx)
+	out := &gatewayv1.WhoAmIResponse{By: c.who, Scope: c.scope}
+	if !c.exp.IsZero() {
+		out.ExpiresAt = timestamppb.New(c.exp)
+	}
+	return connect.NewResponse(out), nil
 }
 
-// clientKey is what sign-in failures are counted by: one IPv4 address, or one IPv6 /64, which
-// is what a single client usually gets.
+const (
+	loginBurst = 5
+	loginEvery = time.Minute
+)
+
+// logins holds a limiter per address with recent wrong passwords. One is added only after a
+// PBKDF2 check, which verifying caps, so the map stays small however many addresses try.
+type logins struct {
+	mu sync.Mutex
+	m  map[netip.Prefix]*rate.Limiter
+}
+
+func (l *logins) wait(key netip.Prefix, now time.Time) time.Duration {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	lim := l.m[key]
+	if lim == nil {
+		return 0
+	}
+	r := lim.ReserveN(now, 1)
+	defer r.CancelAt(now) // only looking: the try is spent in fail
+	return r.DelayFrom(now)
+}
+
+// fail spends one of key's tries. Full limiters are dropped first: a new one allows as much.
+func (l *logins) fail(key netip.Prefix, now time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	maps.DeleteFunc(l.m, func(_ netip.Prefix, lim *rate.Limiter) bool { return lim.TokensAt(now) >= loginBurst })
+	lim := l.m[key]
+	if lim == nil {
+		lim = rate.NewLimiter(rate.Every(loginEvery), loginBurst)
+		l.m[key] = lim
+	}
+	lim.AllowN(now, 1)
+}
+
+func (l *logins) forget(key netip.Prefix) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.m, key)
+}
+
+// clientKey is an IPv4 address or an IPv6 /64, what one client usually gets.
 func clientKey(ip netip.Addr) netip.Prefix {
 	p, _ := ip.Prefix(min(ip.BitLen(), 64))
 	return p
 }
 
-// clientIP is the visitor's address. Behind a proxy on a private network, such as Traefik in
-// Docker, that is the last X-Forwarded-For entry, the one the proxy added; otherwise it is the
-// peer address.
-func clientIP(r *http.Request) netip.Addr {
-	peer, _ := netip.ParseAddrPort(r.RemoteAddr)
-	ip := peer.Addr().Unmap()
-	fwd := r.Header.Values("X-Forwarded-For")
+// clientIP trusts X-Forwarded-For only from a private or loopback peer, such as Traefik in
+// Docker, and takes its last entry, the one that proxy added.
+func clientIP(peer string, h http.Header) netip.Addr {
+	addr, _ := netip.ParseAddrPort(peer)
+	ip := addr.Addr().Unmap()
+	fwd := h.Values("X-Forwarded-For")
 	viaProxy := ip.IsLoopback() || ip.IsPrivate()
 	if len(fwd) == 0 || !viaProxy {
 		return ip

@@ -14,16 +14,13 @@ import { createPilot, type Facts, type Pilot, type PilotOptions } from '@bundle-
 export { bundleVersion, type Facts } from '@bundle-pilot/core';
 
 export interface BundlePilotOptions extends PilotOptions {
-	/** What the gateway decides on; null while unknown (signed out). Runs in the guard, so inject() works. */
+	/** null while unknown, such as signed out. Runs in the guard, so inject() works. */
 	facts: () => Facts | null | undefined;
-	/** Another pilot to guard with, such as @bundle-pilot/capacitor's for native apps. Runs once, inject() works. */
+	/** Another pilot, such as @bundle-pilot/capacitor's. Runs once, inject() works. */
 	pilot?: () => Pilot;
 }
 
-/**
- * Guards every route, lazy children included: a navigation whose facts call for another bundle
- * becomes a page load of that bundle. Root providers only; a later router.resetConfig drops it.
- */
+/** Guards every route. Root providers only; a later router.resetConfig drops it. */
 export function provideBundlePilot({ facts, beforeSwitch, pilot: custom, ...options }: BundlePilotOptions): EnvironmentProviders {
 	return makeEnvironmentProviders([
 		{

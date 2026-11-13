@@ -16,10 +16,9 @@ type Step struct {
 	Bundle  string
 }
 
-// Mapping is the backend table, sorted by Backend, oldest first.
+// Mapping is the backend table, oldest backend first.
 type Mapping []Step
 
-// NewMapping sorts the backend table from config.pb, oldest backend first.
 func NewMapping(layout version.Layout, raw map[string]string) Mapping {
 	m := make(Mapping, 0, len(raw))
 	for backend, bundle := range raw {
@@ -31,8 +30,7 @@ func NewMapping(layout version.Layout, raw map[string]string) Mapping {
 	return m
 }
 
-// at returns the index of the newest step whose Backend <= backend, or of the oldest step
-// when backend predates them all. m must not be empty.
+// at is the newest step at or below backend, else the oldest; m must not be empty.
 func (m Mapping) at(layout version.Layout, backend string) int {
 	i, found := slices.BinarySearchFunc(m, backend, func(s Step, b string) int { return layout.Compare(s.Backend, b) })
 	if !found {
@@ -41,7 +39,7 @@ func (m Mapping) at(layout version.Layout, backend string) int {
 	return max(i, 0)
 }
 
-// kind is the shape of the backend keys, all dates or all versions; Invalid for an empty table.
+// kind is the keys' shape, all dates or all versions; Invalid for an empty table.
 func (m Mapping) kind(layout version.Layout) (version.Kind, error) {
 	kind := version.Invalid
 	for _, s := range m {
@@ -57,23 +55,30 @@ func (m Mapping) kind(layout version.Layout) (version.Kind, error) {
 	return kind, nil
 }
 
-// validate appends an issue for each step that serves nothing, looks mistyped (a date more than
-// 90 days ahead) or sends a newer backend to an older bundle. unserved says why a bundle is not
-// served, or returns "".
-func (m Mapping) validate(layout version.Layout, unserved func(string) string, now time.Time, issues []string) []string {
+func (m Mapping) validate(layout version.Layout, unserved func(string) string, now time.Time, issues []Issue) []Issue {
 	y, mo, d := now.AddDate(0, 0, 90).Date()
 	soon := y*10000 + int(mo)*100 + d // yyyymmdd, like layout.Date
 	for i, s := range m {
 		if why := unserved(s.Bundle); why != "" {
-			issues = append(issues, fmt.Sprintf(
-				"backend %s -> bundle %s %s: its backends get the closest older step that serves", s.Backend, s.Bundle, why))
+			issues = append(issues, Issue{
+				Code: "backend_unserved",
+				Text: fmt.Sprintf("backend %s -> bundle %s %s: its backends get the closest older step that serves",
+					s.Backend, s.Bundle, why),
+				Bundle: s.Bundle,
+			})
 		}
 		if layout.Date(s.Backend) > soon {
-			issues = append(issues, fmt.Sprintf("backend key %s is more than 90 days ahead, typo?", s.Backend))
+			issues = append(issues, Issue{
+				Code: "backend_future",
+				Text: fmt.Sprintf("backend key %s is more than 90 days ahead, typo?", s.Backend),
+			})
 		}
 		if i > 0 && layout.Compare(s.Bundle, m[i-1].Bundle) < 0 {
-			issues = append(issues, fmt.Sprintf("backend %s -> %s is older than backend %s -> %s",
-				s.Backend, s.Bundle, m[i-1].Backend, m[i-1].Bundle))
+			issues = append(issues, Issue{
+				Code: "backend_order",
+				Text: fmt.Sprintf("backend %s -> %s is older than backend %s -> %s",
+					s.Backend, s.Bundle, m[i-1].Backend, m[i-1].Bundle),
+			})
 		}
 	}
 	return issues

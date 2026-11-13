@@ -1,0 +1,350 @@
+syntax = "proto3";
+
+package bundlepilot.gateway.v1;
+
+import "bundlepilot/config/v1/config.proto";
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/zenkiet/bundle-pilot/internal/gen/gatewayv1;gatewayv1";
+
+// GatewayService is the admin API under /__gateway/. Calls take "Authorization: Bearer <token>",
+// a Login token or an API token (bp_...) whose scope covers the call. Until a password is set the
+// API is open; during first-run setup, writes also need the X-Setup-Token header from the log.
+service GatewayService {
+  // No token needed.
+  rpc GetInfo(GetInfoRequest) returns (GetInfoResponse);
+  // A token for 12 hours; changing the password or the username ends every token.
+  rpc Login(LoginRequest) returns (LoginResponse);
+  // Trades an unexpired Login token for one 12 hours longer, up to 30 days after the login.
+  rpc RefreshSession(RefreshSessionRequest) returns (RefreshSessionResponse);
+  // Scope read.
+  rpc WhoAmI(WhoAmIRequest) returns (WhoAmIResponse);
+  // Scope read.
+  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+  // Status and new events, within a second of a change and at least every 10 s, until the token
+  // expires or stops being valid. Scope read.
+  rpc Watch(WatchRequest) returns (stream WatchResponse);
+  // The last 500 changes, oldest first. Scope read.
+  rpc ListEvents(ListEventsRequest) returns (ListEventsResponse);
+  // Secrets masked. Scope read.
+  rpc GetConfig(GetConfigRequest) returns (GetConfigResponse);
+  // Validates without saving. Scope read.
+  rpc CheckConfig(CheckConfigRequest) returns (CheckConfigResponse);
+  // Saves and reloads. Scope admin.
+  rpc UpdateConfig(UpdateConfigRequest) returns (UpdateConfigResponse);
+  // Answers like POST /__gateway/data, under the saved config or a draft. Scope read.
+  rpc Decide(DecideRequest) returns (DecideResponse);
+  // Newest first. Scope read.
+  rpc ListHistory(ListHistoryRequest) returns (ListHistoryResponse);
+  // Secrets masked. Scope read.
+  rpc GetRevision(GetRevisionRequest) returns (GetRevisionResponse);
+  // A blocked bundle stays on disk. Scope admin.
+  rpc SetBlocked(SetBlockedRequest) returns (SetBlockedResponse);
+  // Scope admin.
+  rpc ListTokens(ListTokensRequest) returns (ListTokensResponse);
+  // Needs an admin password first. Scope admin.
+  rpc CreateToken(CreateTokenRequest) returns (CreateTokenResponse);
+  // Scope admin.
+  rpc DeleteToken(DeleteTokenRequest) returns (DeleteTokenResponse);
+  // Scope admin.
+  rpc Reload(ReloadRequest) returns (ReloadResponse);
+}
+
+message GetInfoRequest {}
+
+message GetInfoResponse {
+  string version = 1;
+  // Set while there is no config.pb yet.
+  bool setup_required = 2;
+  bool password_set = 3;
+}
+
+message LoginRequest {
+  string username = 1;
+  string password = 2;
+}
+
+message LoginResponse {
+  string token = 1;
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+message RefreshSessionRequest {}
+
+message RefreshSessionResponse {
+  // The old token stays valid until it expires.
+  string token = 1;
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+message WhoAmIRequest {}
+
+message WhoAmIResponse {
+  // The username, "token:<name>", "setup" or "anonymous" (no password yet).
+  string by = 1;
+  // read, upload or admin; read during setup until X-Setup-Token is right.
+  string scope = 2;
+  // Login tokens only.
+  google.protobuf.Timestamp expires_at = 3;
+}
+
+message GetStatusRequest {}
+
+message GetStatusResponse {
+  string version = 1;
+  google.protobuf.Timestamp started_at = 2;
+  string project_name = 3;
+  string environment = 4;
+  // Set while there is no config.pb yet.
+  bool setup_required = 5;
+  bool password_set = 6;
+  string default_bundle = 7;
+  // "config", "previous", "newest" or "none".
+  string default_from = 8;
+  string base_path = 9;
+  // "local" or s3://bucket/prefix/.
+  string source = 10;
+  // Unset for a local source.
+  Sync sync = 11;
+  // Set when only signed bundles load.
+  bool signing = 12;
+  google.protobuf.Timestamp loaded_at = 13;
+  uint64 reloads = 14;
+  string last_error = 15;
+  // A rejected config and refused bundles.
+  repeated Issue errors = 16;
+  // Leaves out the zips, which sit in the page cache.
+  uint64 resident_bytes = 17;
+  repeated Bundle bundles = 18;
+  // Since start, by via, plus "refused".
+  map<string, uint64> decisions = 19;
+  map<string, uint64> decisions_by_bundle = 20;
+  // Warnings from the last load.
+  repeated Issue issues = 21;
+  // The last hour, minute by minute.
+  Traffic traffic = 22;
+}
+
+message Issue {
+  // Stable across versions, such as rule_expired or bundle_refused; text is for people.
+  string code = 1;
+  string text = 2;
+  string rule = 3;
+  string bundle = 4;
+  // Why a bundle_refused or bundle_kept_previous zip failed: no_index, signature, damaged,
+  // too_large, too_many_files, unsupported or bad_native; empty for other causes.
+  string reason = 5;
+}
+
+message Traffic {
+  // When the first of the 60 minutes began; the last one is still counting.
+  google.protobuf.Timestamp start = 1;
+  // 60 counts per bundle, oldest first; bundles idle for the hour are left out.
+  map<string, Counts> by_bundle = 2;
+  // The same, keyed like decisions: rule:<id>, backend:<key>, default, native or refused.
+  map<string, Counts> by_via = 3;
+}
+
+message Counts {
+  repeated uint64 per_minute = 1;
+}
+
+message Sync {
+  google.protobuf.Timestamp at = 1;
+  int64 objects = 2;
+  string error = 3;
+}
+
+message Bundle {
+  string version = 1;
+  int64 files = 2;
+  int64 zip_bytes = 3;
+  google.protobuf.Timestamp mod_time = 4;
+  // App versions it runs on, such as ">=4.102.0"; empty means any.
+  string native = 5;
+  // On the blocked list.
+  bool blocked = 6;
+  // Visitors can get it: not blocked, and it has the default's <base href>.
+  bool served = 7;
+  // Of the zip, hex.
+  string sha256 = 8;
+  // As WhoAmI names them, or "s3"; empty once older than the events kept.
+  string uploaded_by = 9;
+}
+
+message GetConfigRequest {}
+
+message GetConfigResponse {
+  bundlepilot.config.v1.Config config = 1;
+  string etag = 2;
+}
+
+message CheckConfigRequest {
+  bundlepilot.config.v1.Config config = 1;
+}
+
+message CheckConfigResponse {
+  // Why saving would fail; empty when it would save.
+  string error = 1;
+  repeated Issue issues = 2;
+}
+
+message UpdateConfigRequest {
+  // Masked secrets and a missing auth keep the stored values.
+  bundlepilot.config.v1.Config config = 1;
+  // From GetConfig: a config changed since is refused with ABORTED.
+  string etag = 2;
+}
+
+message UpdateConfigResponse {
+  string etag = 1;
+  repeated Issue issues = 2;
+}
+
+message DecideRequest {
+  // As posted to /__gateway/data.
+  google.protobuf.Struct facts = 1;
+  // A draft to decide under instead of the saved config.
+  bundlepilot.config.v1.Config config = 2;
+}
+
+message DecideResponse {
+  string bundle = 1;
+  // rule:<id>, backend:<key>, default or native.
+  string via = 2;
+  // Why each earlier rule was passed over.
+  repeated Skip why = 3;
+  // Set when no bundle fits.
+  string error = 4;
+  // How each condition of the deciding rule held.
+  repeated Match match = 5;
+}
+
+message Match {
+  string fact = 1;
+  string value = 2;
+  // As in Skip; a value the condition lists holds whatever its bucket.
+  int32 bucket = 3;
+  int32 percent = 4;
+}
+
+message Skip {
+  string rule = 1;
+  // inactive, expired, no_fact, no_match or needs_native (a newer app than the native fact).
+  string reason = 2;
+  // The condition that failed and the value sent.
+  string fact = 3;
+  string value = 4;
+  // For a percentage condition: the value's slot, 0-99, which matches below percent.
+  int32 bucket = 5;
+  int32 percent = 6;
+}
+
+message ListHistoryRequest {
+  // Newest revisions only; 0 lists all.
+  int32 limit = 1;
+  // Adds each revision's config, so diffing a list takes one call.
+  bool configs = 2;
+}
+
+message ListHistoryResponse {
+  repeated Revision revisions = 1;
+}
+
+message Revision {
+  string id = 1;
+  google.protobuf.Timestamp at = 2;
+  string by = 3;
+  // With ListHistory configs; secrets masked.
+  bundlepilot.config.v1.Config config = 4;
+}
+
+message GetRevisionRequest {
+  string id = 1;
+}
+
+message GetRevisionResponse {
+  bundlepilot.config.v1.Config config = 1;
+}
+
+message SetBlockedRequest {
+  string version = 1;
+  bool blocked = 2;
+}
+
+message SetBlockedResponse {}
+
+message ListTokensRequest {}
+
+message ListTokensResponse {
+  repeated Token tokens = 1;
+}
+
+message Token {
+  string name = 1;
+  // read, upload or admin.
+  string scope = 2;
+  google.protobuf.Timestamp created = 3;
+}
+
+message CreateTokenRequest {
+  string name = 1;
+  // read, upload or admin.
+  string scope = 2;
+}
+
+message CreateTokenResponse {
+  // The secret, shown only this once.
+  string token = 1;
+}
+
+message DeleteTokenRequest {
+  string name = 1;
+}
+
+message DeleteTokenResponse {}
+
+message ReloadRequest {}
+
+message ReloadResponse {
+  int64 reload_ms = 1;
+}
+
+message WatchRequest {
+  // The last event id held; the first message brings up to 100 events after it, the latest 100
+  // for 0.
+  int64 after = 1;
+}
+
+message WatchResponse {
+  GetStatusResponse status = 1;
+  // Since the previous message, oldest first.
+  repeated Event events = 2;
+}
+
+message ListEventsRequest {
+  // The last event id held; 0 lists the latest.
+  int64 after = 1;
+  // 100 when 0, at most 500.
+  int32 limit = 2;
+}
+
+message ListEventsResponse {
+  repeated Event events = 1;
+}
+
+message Event {
+  // Grows with every event, for after.
+  int64 id = 1;
+  google.protobuf.Timestamp at = 2;
+  // upload, delete, block, unblock, config, token_create, token_delete, reload, fetch or remove
+  // (the bucket sync).
+  string kind = 3;
+  // As WhoAmI names them, or "s3".
+  string by = 4;
+  string bundle = 5;
+  string token = 6;
+  // For config events: the history id saved, empty when nothing history keeps changed.
+  string revision = 7;
+}
