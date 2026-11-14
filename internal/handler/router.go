@@ -62,7 +62,7 @@ func New(cat *usecase.Catalog, origins []string, log *slog.Logger, stop <-chan s
 		problem(w, r, http.StatusNotFound, "no such endpoint")
 	})
 	mux.HandleFunc("GET /", rt.root)
-	return cors(origins, mux)
+	return rt.cors(origins, mux)
 }
 
 func (rt *Router) root(w http.ResponseWriter, r *http.Request) {

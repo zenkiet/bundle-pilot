@@ -57,9 +57,10 @@ func (a Auth) Session(now time.Time) (token string, exp time.Time) {
 	return a.issue(now, now)
 }
 
-// Refresh lets an app keep a session without storing the password.
+// Refresh lets an app keep a session without storing the password: it renews even an expired
+// token, since an app closed overnight holds nothing else.
 func (a Auth) Refresh(token string, now time.Time) (string, time.Time, error) {
-	t, err := a.parse(token)
+	t, err := a.parse(paseto.NewParserWithoutExpiryCheck(), token)
 	if err != nil {
 		return "", time.Time{}, errSession
 	}
@@ -72,7 +73,7 @@ func (a Auth) Refresh(token string, now time.Time) (string, time.Time, error) {
 }
 
 func (a Auth) SessionExpiry(token string) (time.Time, bool) {
-	t, err := a.parse(token)
+	t, err := a.parse(paseto.NewParser(), token)
 	if err != nil {
 		return time.Time{}, false
 	}
@@ -94,11 +95,11 @@ func (a Auth) issue(login, now time.Time) (string, time.Time) {
 	return t.V4Encrypt(a.sessionKey(), nil), exp
 }
 
-func (a Auth) parse(token string) (*paseto.Token, error) {
+func (a Auth) parse(p paseto.Parser, token string) (*paseto.Token, error) {
 	if a.Hash == "" {
 		return nil, errSession
 	}
-	return paseto.NewParser().ParseV4Local(a.sessionKey(), token, nil)
+	return p.ParseV4Local(a.sessionKey(), token, nil)
 }
 
 // sessionKey derives from the hash and username: changing either ends every session, while a

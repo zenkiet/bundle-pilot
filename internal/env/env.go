@@ -42,6 +42,10 @@ func Load(getenv func(string) string) (Config, error) {
 		if o = strings.TrimSpace(o); o == "" {
 			continue
 		}
+		if o == "*" { // every origin, which the handler honors only once an admin password is set
+			cfg.Origins = append(cfg.Origins, o)
+			continue
+		}
 		u, err := url.Parse(o)
 		if err != nil || u.Scheme == "" || u.Host == "" || strings.Trim(u.Path, "/") != "" {
 			return cfg, fmt.Errorf("CORS_ORIGINS: %q is not an origin like https://portal.example.com", o)

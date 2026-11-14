@@ -207,9 +207,11 @@ account leaves the admin API open, and `GetStatus` lists that as an issue.
 `Authorization: Bearer <token>`, valid for 12 hours. It is a PASETO v4.local
 token whose key derives from the password hash and the username, so changing
 either ends every login, while a restart keeps them. `RefreshSession`, sent
-with an unexpired login token, returns a new one for another 12 hours, up to 30
-days after the login, so an app keeps its session without storing the
-password; after that, or once the password changes, it signs in again. At most two password
+with a login token, returns a new one for another 12 hours, up to 30 days after
+the login, so an app keeps its session without storing the password. It takes
+an expired token too, since an app closed overnight holds nothing else; every
+other call refuses one. After the 30 days, or once the password changes, the
+app signs in again. At most two password
 checks run at once (more get `resource_exhausted`), and failed logins are
 logged. An address may send 5 wrong passwords in a row, then one more a minute
 (`resource_exhausted` with `Retry-After`); a right one clears its count. Behind
@@ -252,7 +254,10 @@ by default the Bundle Pilot app (`capacitor://localhost` on iOS,
 `https://localhost` on Android). A web build of the app, or another portal, on
 its own host needs its origin added, and the list replaces the default, so keep
 the app's two in it. Other origins get no CORS headers, so browsers keep their
-pages out of the API.
+pages out of the API. `*` stands for every origin, but only once an admin
+password is set: until then the API is open, and the list is all that keeps
+another site's page from using it, so during setup and on a gateway without a
+password only the origins written out are let in.
 
 ## Bundle source
 
@@ -320,7 +325,7 @@ its own `config.pb` and history, so save the config to every one, or run one.
 | `DIST` | `./dist` | Root holding `versions/` and `config.pb`; writable, the admin API writes the config and a bucket source writes `versions/` |
 | `LOG_LEVEL` | `info` | `debug` also logs every bundle switch decided by `/data` |
 | `BUNDLE_PUBKEY` | off | Ed25519 public key (hex or base64); every bundle must then be signed, see below |
-| `CORS_ORIGINS` | `capacitor://localhost,https://localhost` | Comma-separated browser origins that may call `/__gateway/` from another origin. The default lets the Bundle Pilot app in; a web build on its own host, such as `https://portal.example.com`, must be added, and the list replaces the default |
+| `CORS_ORIGINS` | `capacitor://localhost,https://localhost` | Comma-separated browser origins that may call `/__gateway/` from another origin. The default lets the Bundle Pilot app in; a web build on its own host, such as `https://portal.example.com`, must be added, and the list replaces the default. `*` lets every origin in once an admin password is set |
 
 The gateway serves bundles only; route API paths to their backend at the
 ingress. On shutdown, requests get 10 seconds to finish before open
@@ -343,7 +348,7 @@ curl https://host/__gateway/bundlepilot.gateway.v1.GatewayService/GetStatus \
 |---|---|---|
 | `GetInfo` | none | `{version, setupRequired, passwordSet}`, so an app knows what answers before it signs in. |
 | `Login` | none | `{username, password}` answers `{token, expiresAt}`, see Admin auth and first run. |
-| `RefreshSession` | login token | A new `{token, expiresAt}` for the unexpired login token sent, see Admin auth and first run; `unauthenticated` for any other token. |
+| `RefreshSession` | login token | A new `{token, expiresAt}` for the login token sent, expired or not, see Admin auth and first run; `unauthenticated` for any other token. |
 | `WhoAmI` | read | `{by, scope, expiresAt}`: who the token belongs to, as `by` names them in logs, its scope, and when a login token ends. During setup, scope `read` until `X-Setup-Token` is right. |
 | `GetStatus` | read | Gateway `version` and `startedAt`, `projectName`, `environment`, `setupRequired` (no `config.pb` yet) and `passwordSet`, default and its source, base path, bundle `source` (`local` or `s3://bucket/prefix/`) with the last `sync` (`at`, `objects`, `error`) for a bucket, `signing` (whether `BUNDLE_PUBKEY` is set), `loadedAt`, reload count and last error, `errors` (a rejected config, refused bundles), memory the process holds from the OS (`residentBytes`; the zips sit in the page cache, which a cgroup limit counts too), bundles with file counts, `zipBytes`, `modTime`, `native`, `blocked` (on the blocked list), `served` (visitors can get it), the zip's `sha256` and `uploadedBy` (who uploaded it, or `s3`, while the feed remembers), decisions counted by `via` (and `refused`) and by bundle since start, `traffic` (decisions per minute over the last hour, oldest first, from `start`: `byBundle` and `byVia`, the latter keyed like the decision counts), load issues. `errors` and `issues` are `{code, text, rule, bundle, reason}`: `code` is stable for apps (`rule_expired`, `bundle_refused`, `no_password`, ...), `text` is for people, and `reason` says why the zip of a `bundle_refused` or `bundle_kept_previous` issue failed to load: `no_index`, `signature`, `damaged`, `too_large`, `too_many_files`, `unsupported` or `bad_native` (its `<meta name="bundle-pilot:native">`); empty for other causes, such as a read error. |
 | `Watch` | read | A stream of `{status, events}`: one message at once, then one within a second of an event or a reload, and about every 10 seconds otherwise. `after` resumes events from the last id the app holds. It ends when the server drains, when the login token expires, and when a new config no longer lets the caller in. |

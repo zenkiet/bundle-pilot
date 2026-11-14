@@ -89,7 +89,7 @@ type GatewayServiceClient interface {
 	GetInfo(context.Context, *connect.Request[gatewayv1.GetInfoRequest]) (*connect.Response[gatewayv1.GetInfoResponse], error)
 	// A token for 12 hours; changing the password or the username ends every token.
 	Login(context.Context, *connect.Request[gatewayv1.LoginRequest]) (*connect.Response[gatewayv1.LoginResponse], error)
-	// Trades an unexpired Login token for one 12 hours longer, up to 30 days after the login.
+	// Trades a Login token, expired or not, for one 12 hours longer, up to 30 days after the login.
 	RefreshSession(context.Context, *connect.Request[gatewayv1.RefreshSessionRequest]) (*connect.Response[gatewayv1.RefreshSessionResponse], error)
 	// Scope read.
 	WhoAmI(context.Context, *connect.Request[gatewayv1.WhoAmIRequest]) (*connect.Response[gatewayv1.WhoAmIResponse], error)
@@ -364,7 +364,7 @@ type GatewayServiceHandler interface {
 	GetInfo(context.Context, *connect.Request[gatewayv1.GetInfoRequest]) (*connect.Response[gatewayv1.GetInfoResponse], error)
 	// A token for 12 hours; changing the password or the username ends every token.
 	Login(context.Context, *connect.Request[gatewayv1.LoginRequest]) (*connect.Response[gatewayv1.LoginResponse], error)
-	// Trades an unexpired Login token for one 12 hours longer, up to 30 days after the login.
+	// Trades a Login token, expired or not, for one 12 hours longer, up to 30 days after the login.
 	RefreshSession(context.Context, *connect.Request[gatewayv1.RefreshSessionRequest]) (*connect.Response[gatewayv1.RefreshSessionResponse], error)
 	// Scope read.
 	WhoAmI(context.Context, *connect.Request[gatewayv1.WhoAmIRequest]) (*connect.Response[gatewayv1.WhoAmIResponse], error)

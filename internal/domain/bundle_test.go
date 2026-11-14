@@ -34,3 +34,25 @@ func TestSnapshotServesOnlyTheDefaultsBase(t *testing.T) {
 		t.Fatal("bundles on one base: 4.0.0 is not served")
 	}
 }
+
+func TestRefreshRenewsAnExpiredSessionFor30Days(t *testing.T) {
+	a := Auth{Username: "admin", Hash: "h"}
+	login := time.Now().Add(-29 * 24 * time.Hour)
+	token, _ := a.Session(login)
+	if _, ok := a.SessionExpiry(token); ok {
+		t.Fatal("a 29-day-old token still authorizes calls")
+	}
+	fresh, exp, err := a.Refresh(token, time.Now())
+	if err != nil {
+		t.Fatalf("Refresh of an expired token inside 30 days: %v", err)
+	}
+	if _, ok := a.SessionExpiry(fresh); !ok || exp.After(login.Add(sessionMax)) {
+		t.Errorf("fresh token expires %v (valid %v), want it valid and no later than 30 days after the login", exp, ok)
+	}
+	if _, _, err := a.Refresh(token, login.Add(sessionMax)); err == nil {
+		t.Error("Refresh 30 days after the login succeeded")
+	}
+	if _, _, err := (Auth{Username: "admin", Hash: "changed"}).Refresh(token, time.Now()); err == nil {
+		t.Error("Refresh after a password change succeeded")
+	}
+}

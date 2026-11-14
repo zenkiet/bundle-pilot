@@ -16,7 +16,7 @@ service GatewayService {
   rpc GetInfo(GetInfoRequest) returns (GetInfoResponse);
   // A token for 12 hours; changing the password or the username ends every token.
   rpc Login(LoginRequest) returns (LoginResponse);
-  // Trades an unexpired Login token for one 12 hours longer, up to 30 days after the login.
+  // Trades a Login token, expired or not, for one 12 hours longer, up to 30 days after the login.
   rpc RefreshSession(RefreshSessionRequest) returns (RefreshSessionResponse);
   // Scope read.
   rpc WhoAmI(WhoAmIRequest) returns (WhoAmIResponse);
