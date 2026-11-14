@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.4.0 - 2026-11-14
+#### 🚀 Features
+- <span style="background-color: #d73a49; color: white; padding: 2px 6px; border-radius: 3px; font-weight: bold; font-size: 0.85em;">BREAKING</span>✨ make the gateway headless with a ConnectRPC admin API - (fbe87ff) - *zenkiet*
+
+- - -
+
 ## v0.3.0 - 2026-11-04
 #### 🚀 Features
 - (**capacitor**) ✨ wait for the gateway before the first navigation. - (06d5d20) - *zenkiet*
