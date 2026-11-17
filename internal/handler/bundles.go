@@ -46,6 +46,7 @@ func (rt *Router) putBundle(w http.ResponseWriter, r *http.Request) {
 		if _, big := errors.AsType[*http.MaxBytesError](err); big {
 			status, reason = http.StatusRequestEntityTooLarge, "too_large"
 		}
+		rt.cat.Record(domain.Event{Kind: "upload_refused", By: c.who, Bundle: v, Reason: reason})
 		writeProblem(w, r, status, err.Error(), reason)
 		return
 	}
@@ -135,7 +136,7 @@ func (rt *Router) SetBlocked(ctx context.Context, req *connect.Request[gatewayv1
 	if on && !rt.cat.Current().Loaded(v) {
 		return nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("%s is not loaded", v))
 	}
-	_, err := rt.cat.UpdateConfig(c.who, func(cur *configv1.Config) (*configv1.Config, error) {
+	_, err := rt.cat.UpdateConfig(c.who, "", func(cur *configv1.Config) (*configv1.Config, error) {
 		cur.Blocked = slices.DeleteFunc(cur.Blocked, func(b string) bool { return b == v })
 		if on {
 			if v == rt.cat.Current().Default.Version {

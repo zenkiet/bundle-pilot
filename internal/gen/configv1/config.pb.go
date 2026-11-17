@@ -161,7 +161,9 @@ type Token struct {
 	// Of the secret, hex; the secret is shown once.
 	Sha256 string `protobuf:"bytes,3,opt,name=sha256,proto3" json:"sha256,omitempty"`
 	// RFC 3339.
-	Created       string `protobuf:"bytes,4,opt,name=created,proto3" json:"created,omitempty"`
+	Created string `protobuf:"bytes,4,opt,name=created,proto3" json:"created,omitempty"`
+	// RFC 3339; empty: never.
+	Expires       string `protobuf:"bytes,5,opt,name=expires,proto3" json:"expires,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -224,12 +226,20 @@ func (x *Token) GetCreated() string {
 	return ""
 }
 
+func (x *Token) GetExpires() string {
+	if x != nil {
+		return x.Expires
+	}
+	return ""
+}
+
 // Revision is one saved config in DIST/history, secrets masked.
 type Revision struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	By    string                 `protobuf:"bytes,1,opt,name=by,proto3" json:"by,omitempty"`
 	// The Config, encoded.
 	Config        []byte `protobuf:"bytes,2,opt,name=config,proto3" json:"config,omitempty"`
+	Note          string `protobuf:"bytes,3,opt,name=note,proto3" json:"note,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -276,6 +286,13 @@ func (x *Revision) GetConfig() []byte {
 		return x.Config
 	}
 	return nil
+}
+
+func (x *Revision) GetNote() string {
+	if x != nil {
+		return x.Note
+	}
+	return ""
 }
 
 type Auth struct {
@@ -548,15 +565,17 @@ const file_bundlepilot_config_v1_config_proto_rawDesc = "" +
 	"\x06tokens\x18\v \x03(\v2\x1c.bundlepilot.config.v1.TokenR\x06tokens\x1a:\n" +
 	"\fBackendEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"c\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"}\n" +
 	"\x05Token\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05scope\x18\x02 \x01(\tR\x05scope\x12\x16\n" +
 	"\x06sha256\x18\x03 \x01(\tR\x06sha256\x12\x18\n" +
-	"\acreated\x18\x04 \x01(\tR\acreated\"2\n" +
+	"\acreated\x18\x04 \x01(\tR\acreated\x12\x18\n" +
+	"\aexpires\x18\x05 \x01(\tR\aexpires\"F\n" +
 	"\bRevision\x12\x0e\n" +
 	"\x02by\x18\x01 \x01(\tR\x02by\x12\x16\n" +
-	"\x06config\x18\x02 \x01(\fR\x06config\"c\n" +
+	"\x06config\x18\x02 \x01(\fR\x06config\x12\x12\n" +
+	"\x04note\x18\x03 \x01(\tR\x04note\"c\n" +
 	"\x04Auth\x12\x1a\n" +
 	"\busername\x18\x01 \x01(\tR\busername\x12#\n" +
 	"\rpassword_hash\x18\x02 \x01(\tR\fpasswordHash\x12\x1a\n" +

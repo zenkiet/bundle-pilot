@@ -14,6 +14,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -27,6 +28,7 @@ import (
 const (
 	versionsDir = "versions"
 	configFile  = "config.pb"
+	setupFile   = "setup-token" // read by gateway setup, since logs rotate
 )
 
 // seed keys Stamp's hash, which only has to compare within one run.
@@ -44,6 +46,7 @@ type Source struct {
 	mirror     atomic.Pointer[mirror.Mirror]
 	stop       context.CancelFunc
 	events     events
+	used       tokenUse
 }
 
 type zipFile struct {
@@ -58,6 +61,7 @@ func New(dir string, log *slog.Logger, key ed25519.PublicKey) (*Source, error) {
 	}
 	s := &Source{root: root, log: log, key: key, cache: map[string]zipped{}}
 	s.loadEvents()
+	s.loadTokenUse()
 	return s, nil
 }
 
@@ -217,7 +221,12 @@ func (s *Source) loadConfig(inv *domain.Inventory) (domain.Config, error) {
 	case errors.Is(err, fs.ErrNotExist) && s.haveConfig:
 		return domain.Config{}, errors.New("config.pb missing: restore it, or restart to run setup again")
 	case errors.Is(err, fs.ErrNotExist):
-		s.setup = cmp.Or(s.setup, rand.Text())
+		if s.setup == "" {
+			s.setup = rand.Text()
+			if err := s.root.WriteFile(setupFile, []byte(s.setup+"\n"), 0o600); err != nil {
+				s.log.Warn("setup token not saved in "+setupFile, "error", err)
+			}
+		}
 		inv.Setup = s.setup
 		msg := "config.pb not found: no rules, every visitor gets the default bundle"
 		if _, err := s.root.Stat("config.json"); err == nil {
@@ -233,8 +242,16 @@ func (s *Source) loadConfig(inv *domain.Inventory) (domain.Config, error) {
 	if err != nil {
 		return c, fmt.Errorf("config.pb: %w (fix it, or remove it and restart to run setup again)", err)
 	}
+	if !s.haveConfig {
+		_ = s.root.Remove(setupFile) // setup is over, or an earlier run left the file
+	}
 	s.haveConfig = true
 	return c, nil
+}
+
+func ReadSetupToken(dir string) (string, error) {
+	b, err := os.ReadFile(filepath.Join(dir, setupFile))
+	return strings.TrimSpace(string(b)), err
 }
 
 func (s *Source) ReadConfig() (*configv1.Config, error) {
@@ -246,7 +263,7 @@ func (s *Source) ReadConfig() (*configv1.Config, error) {
 }
 
 // WriteConfig returns the history revision id, "" when the save added none.
-func (s *Source) WriteConfig(pb *configv1.Config, by string) (string, error) {
+func (s *Source) WriteConfig(pb *configv1.Config, by, note string) (string, error) {
 	data, err := domain.EncodeConfig(pb)
 	if err != nil {
 		return "", err
@@ -269,7 +286,7 @@ func (s *Source) WriteConfig(pb *configv1.Config, by string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	rev, err := s.record(old, oldAt, pb, by)
+	rev, err := s.record(old, oldAt, pb, by, note)
 	if err != nil {
 		s.log.Warn("config saved, but not recorded in history/", "error", err)
 	}
@@ -315,6 +332,42 @@ func (s *Source) DeleteBundle(ctx context.Context, name string) error {
 		}
 	}
 	return s.root.Remove(path.Join(versionsDir, name+".zip"))
+}
+
+// CheckSource lists src as the sync would, writing nothing.
+func (s *Source) CheckSource(ctx context.Context, src domain.Source) (zips, ignored, wouldRemove []string, err error) {
+	local, err := s.listZips()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if src.Type == "" {
+		for _, z := range local {
+			zips = append(zips, z.name)
+		}
+		return zips, nil, nil, nil
+	}
+	store, err := s3.New(src)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	objs, err := store.List(ctx)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	want, ignored := mirror.Split(objs)
+	for key := range want {
+		zips = append(zips, strings.TrimSuffix(key, ".zip"))
+	}
+	if len(want) > 0 { // as in the sync, a listing without zips removes nothing
+		for _, z := range local {
+			if !slices.Contains(zips, z.name) {
+				wouldRemove = append(wouldRemove, z.name)
+			}
+		}
+	}
+	return zips, ignored, wouldRemove, nil
 }
 
 func (s *Source) SyncState() (at time.Time, objects int, lastErr string) {

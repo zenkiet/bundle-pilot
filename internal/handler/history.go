@@ -23,7 +23,7 @@ func (rt *Router) ListHistory(_ context.Context, req *connect.Request[gatewayv1.
 	}
 	out := &gatewayv1.ListHistoryResponse{}
 	for _, r := range revs {
-		rev := &gatewayv1.Revision{Id: r.ID, At: timestamppb.New(r.At), By: r.By}
+		rev := &gatewayv1.Revision{Id: r.ID, At: timestamppb.New(r.At), By: r.By, Note: r.Note}
 		if req.Msg.Configs {
 			rev.Config = r.Config
 		}

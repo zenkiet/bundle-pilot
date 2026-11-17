@@ -66,6 +66,11 @@ type GetInfoResponse struct {
 	// Set while there is no config.pb yet.
 	SetupRequired bool `protobuf:"varint,2,opt,name=setup_required,json=setupRequired,proto3" json:"setup_required,omitempty"`
 	PasswordSet   bool `protobuf:"varint,3,opt,name=password_set,json=passwordSet,proto3" json:"password_set,omitempty"`
+	// Empty during setup.
+	ProjectName string `protobuf:"bytes,4,opt,name=project_name,json=projectName,proto3" json:"project_name,omitempty"`
+	Environment string `protobuf:"bytes,5,opt,name=environment,proto3" json:"environment,omitempty"`
+	// Optional API parts it has: check_source, notes, issue_events, token_expiry, release, setup_qr.
+	Features      []string `protobuf:"bytes,6,rep,name=features,proto3" json:"features,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -119,6 +124,27 @@ func (x *GetInfoResponse) GetPasswordSet() bool {
 		return x.PasswordSet
 	}
 	return false
+}
+
+func (x *GetInfoResponse) GetProjectName() string {
+	if x != nil {
+		return x.ProjectName
+	}
+	return ""
+}
+
+func (x *GetInfoResponse) GetEnvironment() string {
+	if x != nil {
+		return x.Environment
+	}
+	return ""
+}
+
+func (x *GetInfoResponse) GetFeatures() []string {
+	if x != nil {
+		return x.Features
+	}
+	return nil
 }
 
 type LoginRequest struct {
@@ -356,7 +382,7 @@ type WhoAmIResponse struct {
 	By string `protobuf:"bytes,1,opt,name=by,proto3" json:"by,omitempty"`
 	// read, upload or admin; read during setup until X-Setup-Token is right.
 	Scope string `protobuf:"bytes,2,opt,name=scope,proto3" json:"scope,omitempty"`
-	// Login tokens only.
+	// Login tokens, and API tokens that expire.
 	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -680,7 +706,9 @@ type Issue struct {
 	Bundle string `protobuf:"bytes,4,opt,name=bundle,proto3" json:"bundle,omitempty"`
 	// Why a bundle_refused or bundle_kept_previous zip failed: no_index, signature, damaged,
 	// too_large, too_many_files, unsupported or bad_native; empty for other causes.
-	Reason        string `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`
+	Reason string `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`
+	// For token_expiring and token_expired.
+	Token         string `protobuf:"bytes,6,opt,name=token,proto3" json:"token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -746,6 +774,13 @@ func (x *Issue) GetBundle() string {
 func (x *Issue) GetReason() string {
 	if x != nil {
 		return x.Reason
+	}
+	return ""
+}
+
+func (x *Issue) GetToken() string {
+	if x != nil {
+		return x.Token
 	}
 	return ""
 }
@@ -932,7 +967,9 @@ type Bundle struct {
 	// Of the zip, hex.
 	Sha256 string `protobuf:"bytes,8,opt,name=sha256,proto3" json:"sha256,omitempty"`
 	// As WhoAmI names them, or "s3"; empty once older than the events kept.
-	UploadedBy    string `protobuf:"bytes,9,opt,name=uploaded_by,json=uploadedBy,proto3" json:"uploaded_by,omitempty"`
+	UploadedBy string `protobuf:"bytes,9,opt,name=uploaded_by,json=uploadedBy,proto3" json:"uploaded_by,omitempty"`
+	// From index.html's bundle-pilot:* meta tags; unset when it has none.
+	Release       *Release `protobuf:"bytes,10,opt,name=release,proto3" json:"release,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1030,6 +1067,99 @@ func (x *Bundle) GetUploadedBy() string {
 	return ""
 }
 
+func (x *Bundle) GetRelease() *Release {
+	if x != nil {
+		return x.Release
+	}
+	return nil
+}
+
+// Each value is one line of at most 1000 characters; a tag that fails its check is left out.
+type Release struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Commit string                 `protobuf:"bytes,1,opt,name=commit,proto3" json:"commit,omitempty"`
+	Branch string                 `protobuf:"bytes,2,opt,name=branch,proto3" json:"branch,omitempty"`
+	// http or https.
+	Url           string                 `protobuf:"bytes,3,opt,name=url,proto3" json:"url,omitempty"`
+	BuiltAt       *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=built_at,json=builtAt,proto3" json:"built_at,omitempty"`
+	BuiltBy       string                 `protobuf:"bytes,5,opt,name=built_by,json=builtBy,proto3" json:"built_by,omitempty"`
+	Notes         string                 `protobuf:"bytes,6,opt,name=notes,proto3" json:"notes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Release) Reset() {
+	*x = Release{}
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Release) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Release) ProtoMessage() {}
+
+func (x *Release) ProtoReflect() protoreflect.Message {
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Release.ProtoReflect.Descriptor instead.
+func (*Release) Descriptor() ([]byte, []int) {
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *Release) GetCommit() string {
+	if x != nil {
+		return x.Commit
+	}
+	return ""
+}
+
+func (x *Release) GetBranch() string {
+	if x != nil {
+		return x.Branch
+	}
+	return ""
+}
+
+func (x *Release) GetUrl() string {
+	if x != nil {
+		return x.Url
+	}
+	return ""
+}
+
+func (x *Release) GetBuiltAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.BuiltAt
+	}
+	return nil
+}
+
+func (x *Release) GetBuiltBy() string {
+	if x != nil {
+		return x.BuiltBy
+	}
+	return ""
+}
+
+func (x *Release) GetNotes() string {
+	if x != nil {
+		return x.Notes
+	}
+	return ""
+}
+
 type GetConfigRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -1038,7 +1168,7 @@ type GetConfigRequest struct {
 
 func (x *GetConfigRequest) Reset() {
 	*x = GetConfigRequest{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[15]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1050,7 +1180,7 @@ func (x *GetConfigRequest) String() string {
 func (*GetConfigRequest) ProtoMessage() {}
 
 func (x *GetConfigRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[15]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1063,7 +1193,7 @@ func (x *GetConfigRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetConfigRequest.ProtoReflect.Descriptor instead.
 func (*GetConfigRequest) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{15}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{16}
 }
 
 type GetConfigResponse struct {
@@ -1076,7 +1206,7 @@ type GetConfigResponse struct {
 
 func (x *GetConfigResponse) Reset() {
 	*x = GetConfigResponse{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[16]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1088,7 +1218,7 @@ func (x *GetConfigResponse) String() string {
 func (*GetConfigResponse) ProtoMessage() {}
 
 func (x *GetConfigResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[16]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1101,7 +1231,7 @@ func (x *GetConfigResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetConfigResponse.ProtoReflect.Descriptor instead.
 func (*GetConfigResponse) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{16}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *GetConfigResponse) GetConfig() *configv1.Config {
@@ -1127,7 +1257,7 @@ type CheckConfigRequest struct {
 
 func (x *CheckConfigRequest) Reset() {
 	*x = CheckConfigRequest{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[17]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1139,7 +1269,7 @@ func (x *CheckConfigRequest) String() string {
 func (*CheckConfigRequest) ProtoMessage() {}
 
 func (x *CheckConfigRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[17]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1152,7 +1282,7 @@ func (x *CheckConfigRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckConfigRequest.ProtoReflect.Descriptor instead.
 func (*CheckConfigRequest) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{17}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *CheckConfigRequest) GetConfig() *configv1.Config {
@@ -1173,7 +1303,7 @@ type CheckConfigResponse struct {
 
 func (x *CheckConfigResponse) Reset() {
 	*x = CheckConfigResponse{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[18]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1185,7 +1315,7 @@ func (x *CheckConfigResponse) String() string {
 func (*CheckConfigResponse) ProtoMessage() {}
 
 func (x *CheckConfigResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[18]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1198,7 +1328,7 @@ func (x *CheckConfigResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckConfigResponse.ProtoReflect.Descriptor instead.
 func (*CheckConfigResponse) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{18}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *CheckConfigResponse) GetError() string {
@@ -1220,14 +1350,16 @@ type UpdateConfigRequest struct {
 	// Masked secrets and a missing auth keep the stored values.
 	Config *configv1.Config `protobuf:"bytes,1,opt,name=config,proto3" json:"config,omitempty"`
 	// From GetConfig: a config changed since is refused with ABORTED.
-	Etag          string `protobuf:"bytes,2,opt,name=etag,proto3" json:"etag,omitempty"`
+	Etag string `protobuf:"bytes,2,opt,name=etag,proto3" json:"etag,omitempty"`
+	// One line, at most 200 characters; kept with the revision.
+	Note          string `protobuf:"bytes,3,opt,name=note,proto3" json:"note,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *UpdateConfigRequest) Reset() {
 	*x = UpdateConfigRequest{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[19]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1239,7 +1371,7 @@ func (x *UpdateConfigRequest) String() string {
 func (*UpdateConfigRequest) ProtoMessage() {}
 
 func (x *UpdateConfigRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[19]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1252,7 +1384,7 @@ func (x *UpdateConfigRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateConfigRequest.ProtoReflect.Descriptor instead.
 func (*UpdateConfigRequest) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{19}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *UpdateConfigRequest) GetConfig() *configv1.Config {
@@ -1269,6 +1401,13 @@ func (x *UpdateConfigRequest) GetEtag() string {
 	return ""
 }
 
+func (x *UpdateConfigRequest) GetNote() string {
+	if x != nil {
+		return x.Note
+	}
+	return ""
+}
+
 type UpdateConfigResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Etag          string                 `protobuf:"bytes,1,opt,name=etag,proto3" json:"etag,omitempty"`
@@ -1279,7 +1418,7 @@ type UpdateConfigResponse struct {
 
 func (x *UpdateConfigResponse) Reset() {
 	*x = UpdateConfigResponse{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[20]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1291,7 +1430,7 @@ func (x *UpdateConfigResponse) String() string {
 func (*UpdateConfigResponse) ProtoMessage() {}
 
 func (x *UpdateConfigResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[20]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1304,7 +1443,7 @@ func (x *UpdateConfigResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateConfigResponse.ProtoReflect.Descriptor instead.
 func (*UpdateConfigResponse) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{20}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *UpdateConfigResponse) GetEtag() string {
@@ -1321,6 +1460,132 @@ func (x *UpdateConfigResponse) GetIssues() []*Issue {
 	return nil
 }
 
+type CheckSourceRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// A masked secret means the stored one.
+	Source        *configv1.Source `protobuf:"bytes,1,opt,name=source,proto3" json:"source,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckSourceRequest) Reset() {
+	*x = CheckSourceRequest{}
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckSourceRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckSourceRequest) ProtoMessage() {}
+
+func (x *CheckSourceRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckSourceRequest.ProtoReflect.Descriptor instead.
+func (*CheckSourceRequest) Descriptor() ([]byte, []int) {
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *CheckSourceRequest) GetSource() *configv1.Source {
+	if x != nil {
+		return x.Source
+	}
+	return nil
+}
+
+type CheckSourceResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The store's error; empty when the listing worked.
+	Error string `protobuf:"bytes,1,opt,name=error,proto3" json:"error,omitempty"`
+	// The zips the sync mirrors: .zip keys at the top of the prefix.
+	Zips int64 `protobuf:"varint,2,opt,name=zips,proto3" json:"zips,omitempty"`
+	// Their versions, newest first, at most 20.
+	Versions []string `protobuf:"bytes,3,rep,name=versions,proto3" json:"versions,omitempty"`
+	// Local zips the bucket lacks, which the first sync deletes; empty when it lists no zips.
+	WouldRemove []string `protobuf:"bytes,4,rep,name=would_remove,json=wouldRemove,proto3" json:"would_remove,omitempty"`
+	// Keys the sync skips, at most 20: in a folder, hidden or not a .zip.
+	Ignored       []string `protobuf:"bytes,5,rep,name=ignored,proto3" json:"ignored,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CheckSourceResponse) Reset() {
+	*x = CheckSourceResponse{}
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CheckSourceResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CheckSourceResponse) ProtoMessage() {}
+
+func (x *CheckSourceResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CheckSourceResponse.ProtoReflect.Descriptor instead.
+func (*CheckSourceResponse) Descriptor() ([]byte, []int) {
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *CheckSourceResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+func (x *CheckSourceResponse) GetZips() int64 {
+	if x != nil {
+		return x.Zips
+	}
+	return 0
+}
+
+func (x *CheckSourceResponse) GetVersions() []string {
+	if x != nil {
+		return x.Versions
+	}
+	return nil
+}
+
+func (x *CheckSourceResponse) GetWouldRemove() []string {
+	if x != nil {
+		return x.WouldRemove
+	}
+	return nil
+}
+
+func (x *CheckSourceResponse) GetIgnored() []string {
+	if x != nil {
+		return x.Ignored
+	}
+	return nil
+}
+
 type DecideRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// As posted to /__gateway/data.
@@ -1333,7 +1598,7 @@ type DecideRequest struct {
 
 func (x *DecideRequest) Reset() {
 	*x = DecideRequest{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[21]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1345,7 +1610,7 @@ func (x *DecideRequest) String() string {
 func (*DecideRequest) ProtoMessage() {}
 
 func (x *DecideRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[21]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1358,7 +1623,7 @@ func (x *DecideRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DecideRequest.ProtoReflect.Descriptor instead.
 func (*DecideRequest) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{21}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *DecideRequest) GetFacts() *structpb.Struct {
@@ -1392,7 +1657,7 @@ type DecideResponse struct {
 
 func (x *DecideResponse) Reset() {
 	*x = DecideResponse{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[22]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1404,7 +1669,7 @@ func (x *DecideResponse) String() string {
 func (*DecideResponse) ProtoMessage() {}
 
 func (x *DecideResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[22]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1417,7 +1682,7 @@ func (x *DecideResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DecideResponse.ProtoReflect.Descriptor instead.
 func (*DecideResponse) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{22}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *DecideResponse) GetBundle() string {
@@ -1468,7 +1733,7 @@ type Match struct {
 
 func (x *Match) Reset() {
 	*x = Match{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[23]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1480,7 +1745,7 @@ func (x *Match) String() string {
 func (*Match) ProtoMessage() {}
 
 func (x *Match) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[23]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1493,7 +1758,7 @@ func (x *Match) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Match.ProtoReflect.Descriptor instead.
 func (*Match) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{23}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *Match) GetFact() string {
@@ -1541,7 +1806,7 @@ type Skip struct {
 
 func (x *Skip) Reset() {
 	*x = Skip{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[24]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1553,7 +1818,7 @@ func (x *Skip) String() string {
 func (*Skip) ProtoMessage() {}
 
 func (x *Skip) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[24]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1566,7 +1831,7 @@ func (x *Skip) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Skip.ProtoReflect.Descriptor instead.
 func (*Skip) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{24}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *Skip) GetRule() string {
@@ -1623,7 +1888,7 @@ type ListHistoryRequest struct {
 
 func (x *ListHistoryRequest) Reset() {
 	*x = ListHistoryRequest{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[25]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1635,7 +1900,7 @@ func (x *ListHistoryRequest) String() string {
 func (*ListHistoryRequest) ProtoMessage() {}
 
 func (x *ListHistoryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[25]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1648,7 +1913,7 @@ func (x *ListHistoryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListHistoryRequest.ProtoReflect.Descriptor instead.
 func (*ListHistoryRequest) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{25}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *ListHistoryRequest) GetLimit() int32 {
@@ -1674,7 +1939,7 @@ type ListHistoryResponse struct {
 
 func (x *ListHistoryResponse) Reset() {
 	*x = ListHistoryResponse{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[26]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1686,7 +1951,7 @@ func (x *ListHistoryResponse) String() string {
 func (*ListHistoryResponse) ProtoMessage() {}
 
 func (x *ListHistoryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[26]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1699,7 +1964,7 @@ func (x *ListHistoryResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListHistoryResponse.ProtoReflect.Descriptor instead.
 func (*ListHistoryResponse) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{26}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *ListHistoryResponse) GetRevisions() []*Revision {
@@ -1716,13 +1981,14 @@ type Revision struct {
 	By    string                 `protobuf:"bytes,3,opt,name=by,proto3" json:"by,omitempty"`
 	// With ListHistory configs; secrets masked.
 	Config        *configv1.Config `protobuf:"bytes,4,opt,name=config,proto3" json:"config,omitempty"`
+	Note          string           `protobuf:"bytes,5,opt,name=note,proto3" json:"note,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Revision) Reset() {
 	*x = Revision{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[27]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1734,7 +2000,7 @@ func (x *Revision) String() string {
 func (*Revision) ProtoMessage() {}
 
 func (x *Revision) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[27]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1747,7 +2013,7 @@ func (x *Revision) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Revision.ProtoReflect.Descriptor instead.
 func (*Revision) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{27}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *Revision) GetId() string {
@@ -1778,6 +2044,13 @@ func (x *Revision) GetConfig() *configv1.Config {
 	return nil
 }
 
+func (x *Revision) GetNote() string {
+	if x != nil {
+		return x.Note
+	}
+	return ""
+}
+
 type GetRevisionRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -1787,7 +2060,7 @@ type GetRevisionRequest struct {
 
 func (x *GetRevisionRequest) Reset() {
 	*x = GetRevisionRequest{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[28]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1799,7 +2072,7 @@ func (x *GetRevisionRequest) String() string {
 func (*GetRevisionRequest) ProtoMessage() {}
 
 func (x *GetRevisionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[28]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1812,7 +2085,7 @@ func (x *GetRevisionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRevisionRequest.ProtoReflect.Descriptor instead.
 func (*GetRevisionRequest) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{28}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *GetRevisionRequest) GetId() string {
@@ -1831,7 +2104,7 @@ type GetRevisionResponse struct {
 
 func (x *GetRevisionResponse) Reset() {
 	*x = GetRevisionResponse{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[29]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1843,7 +2116,7 @@ func (x *GetRevisionResponse) String() string {
 func (*GetRevisionResponse) ProtoMessage() {}
 
 func (x *GetRevisionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[29]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1856,7 +2129,7 @@ func (x *GetRevisionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRevisionResponse.ProtoReflect.Descriptor instead.
 func (*GetRevisionResponse) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{29}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *GetRevisionResponse) GetConfig() *configv1.Config {
@@ -1876,7 +2149,7 @@ type SetBlockedRequest struct {
 
 func (x *SetBlockedRequest) Reset() {
 	*x = SetBlockedRequest{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[30]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1888,7 +2161,7 @@ func (x *SetBlockedRequest) String() string {
 func (*SetBlockedRequest) ProtoMessage() {}
 
 func (x *SetBlockedRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[30]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1901,7 +2174,7 @@ func (x *SetBlockedRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetBlockedRequest.ProtoReflect.Descriptor instead.
 func (*SetBlockedRequest) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{30}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *SetBlockedRequest) GetVersion() string {
@@ -1926,7 +2199,7 @@ type SetBlockedResponse struct {
 
 func (x *SetBlockedResponse) Reset() {
 	*x = SetBlockedResponse{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[31]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1938,7 +2211,7 @@ func (x *SetBlockedResponse) String() string {
 func (*SetBlockedResponse) ProtoMessage() {}
 
 func (x *SetBlockedResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[31]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1951,7 +2224,7 @@ func (x *SetBlockedResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetBlockedResponse.ProtoReflect.Descriptor instead.
 func (*SetBlockedResponse) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{31}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{34}
 }
 
 type ListTokensRequest struct {
@@ -1962,7 +2235,7 @@ type ListTokensRequest struct {
 
 func (x *ListTokensRequest) Reset() {
 	*x = ListTokensRequest{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[32]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1974,7 +2247,7 @@ func (x *ListTokensRequest) String() string {
 func (*ListTokensRequest) ProtoMessage() {}
 
 func (x *ListTokensRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[32]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1987,7 +2260,7 @@ func (x *ListTokensRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTokensRequest.ProtoReflect.Descriptor instead.
 func (*ListTokensRequest) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{32}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{35}
 }
 
 type ListTokensResponse struct {
@@ -1999,7 +2272,7 @@ type ListTokensResponse struct {
 
 func (x *ListTokensResponse) Reset() {
 	*x = ListTokensResponse{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[33]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2011,7 +2284,7 @@ func (x *ListTokensResponse) String() string {
 func (*ListTokensResponse) ProtoMessage() {}
 
 func (x *ListTokensResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[33]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2024,7 +2297,7 @@ func (x *ListTokensResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTokensResponse.ProtoReflect.Descriptor instead.
 func (*ListTokensResponse) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{33}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *ListTokensResponse) GetTokens() []*Token {
@@ -2038,15 +2311,19 @@ type Token struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Name  string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
 	// read, upload or admin.
-	Scope         string                 `protobuf:"bytes,2,opt,name=scope,proto3" json:"scope,omitempty"`
-	Created       *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=created,proto3" json:"created,omitempty"`
+	Scope   string                 `protobuf:"bytes,2,opt,name=scope,proto3" json:"scope,omitempty"`
+	Created *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=created,proto3" json:"created,omitempty"`
+	// To the hour; unset when never used.
+	LastUsed *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=last_used,json=lastUsed,proto3" json:"last_used,omitempty"`
+	// Unset: never.
+	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Token) Reset() {
 	*x = Token{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[34]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2058,7 +2335,7 @@ func (x *Token) String() string {
 func (*Token) ProtoMessage() {}
 
 func (x *Token) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[34]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2071,7 +2348,7 @@ func (x *Token) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Token.ProtoReflect.Descriptor instead.
 func (*Token) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{34}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *Token) GetName() string {
@@ -2095,18 +2372,34 @@ func (x *Token) GetCreated() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *Token) GetLastUsed() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LastUsed
+	}
+	return nil
+}
+
+func (x *Token) GetExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return nil
+}
+
 type CreateTokenRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Name  string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
 	// read, upload or admin.
-	Scope         string `protobuf:"bytes,2,opt,name=scope,proto3" json:"scope,omitempty"`
+	Scope string `protobuf:"bytes,2,opt,name=scope,proto3" json:"scope,omitempty"`
+	// Unset: never.
+	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CreateTokenRequest) Reset() {
 	*x = CreateTokenRequest{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[35]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2118,7 +2411,7 @@ func (x *CreateTokenRequest) String() string {
 func (*CreateTokenRequest) ProtoMessage() {}
 
 func (x *CreateTokenRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[35]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2131,7 +2424,7 @@ func (x *CreateTokenRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateTokenRequest.ProtoReflect.Descriptor instead.
 func (*CreateTokenRequest) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{35}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *CreateTokenRequest) GetName() string {
@@ -2148,6 +2441,13 @@ func (x *CreateTokenRequest) GetScope() string {
 	return ""
 }
 
+func (x *CreateTokenRequest) GetExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return nil
+}
+
 type CreateTokenResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// The secret, shown only this once.
@@ -2158,7 +2458,7 @@ type CreateTokenResponse struct {
 
 func (x *CreateTokenResponse) Reset() {
 	*x = CreateTokenResponse{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[36]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2170,7 +2470,7 @@ func (x *CreateTokenResponse) String() string {
 func (*CreateTokenResponse) ProtoMessage() {}
 
 func (x *CreateTokenResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[36]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2183,7 +2483,7 @@ func (x *CreateTokenResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateTokenResponse.ProtoReflect.Descriptor instead.
 func (*CreateTokenResponse) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{36}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *CreateTokenResponse) GetToken() string {
@@ -2202,7 +2502,7 @@ type DeleteTokenRequest struct {
 
 func (x *DeleteTokenRequest) Reset() {
 	*x = DeleteTokenRequest{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[37]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2214,7 +2514,7 @@ func (x *DeleteTokenRequest) String() string {
 func (*DeleteTokenRequest) ProtoMessage() {}
 
 func (x *DeleteTokenRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[37]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2227,7 +2527,7 @@ func (x *DeleteTokenRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteTokenRequest.ProtoReflect.Descriptor instead.
 func (*DeleteTokenRequest) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{37}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *DeleteTokenRequest) GetName() string {
@@ -2245,7 +2545,7 @@ type DeleteTokenResponse struct {
 
 func (x *DeleteTokenResponse) Reset() {
 	*x = DeleteTokenResponse{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[38]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2257,7 +2557,7 @@ func (x *DeleteTokenResponse) String() string {
 func (*DeleteTokenResponse) ProtoMessage() {}
 
 func (x *DeleteTokenResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[38]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2270,7 +2570,7 @@ func (x *DeleteTokenResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteTokenResponse.ProtoReflect.Descriptor instead.
 func (*DeleteTokenResponse) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{38}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{41}
 }
 
 type ReloadRequest struct {
@@ -2281,7 +2581,7 @@ type ReloadRequest struct {
 
 func (x *ReloadRequest) Reset() {
 	*x = ReloadRequest{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[39]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2293,7 +2593,7 @@ func (x *ReloadRequest) String() string {
 func (*ReloadRequest) ProtoMessage() {}
 
 func (x *ReloadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[39]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2306,7 +2606,7 @@ func (x *ReloadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReloadRequest.ProtoReflect.Descriptor instead.
 func (*ReloadRequest) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{39}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{42}
 }
 
 type ReloadResponse struct {
@@ -2318,7 +2618,7 @@ type ReloadResponse struct {
 
 func (x *ReloadResponse) Reset() {
 	*x = ReloadResponse{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[40]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2330,7 +2630,7 @@ func (x *ReloadResponse) String() string {
 func (*ReloadResponse) ProtoMessage() {}
 
 func (x *ReloadResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[40]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2343,7 +2643,7 @@ func (x *ReloadResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReloadResponse.ProtoReflect.Descriptor instead.
 func (*ReloadResponse) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{40}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *ReloadResponse) GetReloadMs() int64 {
@@ -2364,7 +2664,7 @@ type WatchRequest struct {
 
 func (x *WatchRequest) Reset() {
 	*x = WatchRequest{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[41]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2376,7 +2676,7 @@ func (x *WatchRequest) String() string {
 func (*WatchRequest) ProtoMessage() {}
 
 func (x *WatchRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[41]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2389,7 +2689,7 @@ func (x *WatchRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchRequest.ProtoReflect.Descriptor instead.
 func (*WatchRequest) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{41}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *WatchRequest) GetAfter() int64 {
@@ -2410,7 +2710,7 @@ type WatchResponse struct {
 
 func (x *WatchResponse) Reset() {
 	*x = WatchResponse{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[42]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2422,7 +2722,7 @@ func (x *WatchResponse) String() string {
 func (*WatchResponse) ProtoMessage() {}
 
 func (x *WatchResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[42]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2435,7 +2735,7 @@ func (x *WatchResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchResponse.ProtoReflect.Descriptor instead.
 func (*WatchResponse) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{42}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *WatchResponse) GetStatus() *GetStatusResponse {
@@ -2464,7 +2764,7 @@ type ListEventsRequest struct {
 
 func (x *ListEventsRequest) Reset() {
 	*x = ListEventsRequest{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[43]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2476,7 +2776,7 @@ func (x *ListEventsRequest) String() string {
 func (*ListEventsRequest) ProtoMessage() {}
 
 func (x *ListEventsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[43]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2489,7 +2789,7 @@ func (x *ListEventsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListEventsRequest.ProtoReflect.Descriptor instead.
 func (*ListEventsRequest) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{43}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *ListEventsRequest) GetAfter() int64 {
@@ -2515,7 +2815,7 @@ type ListEventsResponse struct {
 
 func (x *ListEventsResponse) Reset() {
 	*x = ListEventsResponse{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[44]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2527,7 +2827,7 @@ func (x *ListEventsResponse) String() string {
 func (*ListEventsResponse) ProtoMessage() {}
 
 func (x *ListEventsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[44]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2540,7 +2840,7 @@ func (x *ListEventsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListEventsResponse.ProtoReflect.Descriptor instead.
 func (*ListEventsResponse) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{44}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *ListEventsResponse) GetEvents() []*Event {
@@ -2555,22 +2855,28 @@ type Event struct {
 	// Grows with every event, for after.
 	Id int64                  `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
 	At *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=at,proto3" json:"at,omitempty"`
-	// upload, delete, block, unblock, config, token_create, token_delete, reload, fetch or remove
-	// (the bucket sync).
+	// upload, upload_refused, delete, block, unblock, config, token_create, token_delete, reload,
+	// fetch or remove (the bucket sync), issue or issue_cleared (an Issue came or went).
 	Kind string `protobuf:"bytes,3,opt,name=kind,proto3" json:"kind,omitempty"`
-	// As WhoAmI names them, or "s3".
+	// As WhoAmI names them, or "s3"; empty for issue events.
 	By     string `protobuf:"bytes,4,opt,name=by,proto3" json:"by,omitempty"`
 	Bundle string `protobuf:"bytes,5,opt,name=bundle,proto3" json:"bundle,omitempty"`
 	Token  string `protobuf:"bytes,6,opt,name=token,proto3" json:"token,omitempty"`
 	// For config events: the history id saved, empty when nothing history keeps changed.
-	Revision      string `protobuf:"bytes,7,opt,name=revision,proto3" json:"revision,omitempty"`
+	Revision string `protobuf:"bytes,7,opt,name=revision,proto3" json:"revision,omitempty"`
+	// For config events.
+	Note string `protobuf:"bytes,8,opt,name=note,proto3" json:"note,omitempty"`
+	// For issue events, as in Issue; reason also for upload_refused.
+	Code          string `protobuf:"bytes,9,opt,name=code,proto3" json:"code,omitempty"`
+	Rule          string `protobuf:"bytes,10,opt,name=rule,proto3" json:"rule,omitempty"`
+	Reason        string `protobuf:"bytes,11,opt,name=reason,proto3" json:"reason,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Event) Reset() {
 	*x = Event{}
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[45]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2582,7 +2888,7 @@ func (x *Event) String() string {
 func (*Event) ProtoMessage() {}
 
 func (x *Event) ProtoReflect() protoreflect.Message {
-	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[45]
+	mi := &file_bundlepilot_gateway_v1_gateway_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2595,7 +2901,7 @@ func (x *Event) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Event.ProtoReflect.Descriptor instead.
 func (*Event) Descriptor() ([]byte, []int) {
-	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{45}
+	return file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *Event) GetId() int64 {
@@ -2647,16 +2953,47 @@ func (x *Event) GetRevision() string {
 	return ""
 }
 
+func (x *Event) GetNote() string {
+	if x != nil {
+		return x.Note
+	}
+	return ""
+}
+
+func (x *Event) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
+func (x *Event) GetRule() string {
+	if x != nil {
+		return x.Rule
+	}
+	return ""
+}
+
+func (x *Event) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
 var File_bundlepilot_gateway_v1_gateway_proto protoreflect.FileDescriptor
 
 const file_bundlepilot_gateway_v1_gateway_proto_rawDesc = "" +
 	"\n" +
 	"$bundlepilot/gateway/v1/gateway.proto\x12\x16bundlepilot.gateway.v1\x1a\"bundlepilot/config/v1/config.proto\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x10\n" +
-	"\x0eGetInfoRequest\"u\n" +
+	"\x0eGetInfoRequest\"\xd6\x01\n" +
 	"\x0fGetInfoResponse\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12%\n" +
 	"\x0esetup_required\x18\x02 \x01(\bR\rsetupRequired\x12!\n" +
-	"\fpassword_set\x18\x03 \x01(\bR\vpasswordSet\"F\n" +
+	"\fpassword_set\x18\x03 \x01(\bR\vpasswordSet\x12!\n" +
+	"\fproject_name\x18\x04 \x01(\tR\vprojectName\x12 \n" +
+	"\venvironment\x18\x05 \x01(\tR\venvironment\x12\x1a\n" +
+	"\bfeatures\x18\x06 \x03(\tR\bfeatures\"F\n" +
 	"\fLoginRequest\x12\x1a\n" +
 	"\busername\x18\x01 \x01(\tR\busername\x12\x1a\n" +
 	"\bpassword\x18\x02 \x01(\tR\bpassword\"`\n" +
@@ -2707,13 +3044,14 @@ const file_bundlepilot_gateway_v1_gateway_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\x04R\x05value:\x028\x01\x1aD\n" +
 	"\x16DecisionsByBundleEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x04R\x05value:\x028\x01\"s\n" +
+	"\x05value\x18\x02 \x01(\x04R\x05value:\x028\x01\"\x89\x01\n" +
 	"\x05Issue\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12\x12\n" +
 	"\x04text\x18\x02 \x01(\tR\x04text\x12\x12\n" +
 	"\x04rule\x18\x03 \x01(\tR\x04rule\x12\x16\n" +
 	"\x06bundle\x18\x04 \x01(\tR\x06bundle\x12\x16\n" +
-	"\x06reason\x18\x05 \x01(\tR\x06reason\"\x81\x03\n" +
+	"\x06reason\x18\x05 \x01(\tR\x06reason\x12\x14\n" +
+	"\x05token\x18\x06 \x01(\tR\x05token\"\x81\x03\n" +
 	"\aTraffic\x120\n" +
 	"\x05start\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\x05start\x12J\n" +
 	"\tby_bundle\x18\x02 \x03(\v2-.bundlepilot.gateway.v1.Traffic.ByBundleEntryR\bbyBundle\x12A\n" +
@@ -2731,7 +3069,7 @@ const file_bundlepilot_gateway_v1_gateway_proto_rawDesc = "" +
 	"\x04Sync\x12*\n" +
 	"\x02at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\x12\x18\n" +
 	"\aobjects\x18\x02 \x01(\x03R\aobjects\x12\x14\n" +
-	"\x05error\x18\x03 \x01(\tR\x05error\"\x8f\x02\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error\"\xca\x02\n" +
 	"\x06Bundle\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12\x14\n" +
 	"\x05files\x18\x02 \x01(\x03R\x05files\x12\x1b\n" +
@@ -2742,7 +3080,16 @@ const file_bundlepilot_gateway_v1_gateway_proto_rawDesc = "" +
 	"\x06served\x18\a \x01(\bR\x06served\x12\x16\n" +
 	"\x06sha256\x18\b \x01(\tR\x06sha256\x12\x1f\n" +
 	"\vuploaded_by\x18\t \x01(\tR\n" +
-	"uploadedBy\"\x12\n" +
+	"uploadedBy\x129\n" +
+	"\arelease\x18\n" +
+	" \x01(\v2\x1f.bundlepilot.gateway.v1.ReleaseR\arelease\"\xb3\x01\n" +
+	"\aRelease\x12\x16\n" +
+	"\x06commit\x18\x01 \x01(\tR\x06commit\x12\x16\n" +
+	"\x06branch\x18\x02 \x01(\tR\x06branch\x12\x10\n" +
+	"\x03url\x18\x03 \x01(\tR\x03url\x125\n" +
+	"\bbuilt_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\abuiltAt\x12\x19\n" +
+	"\bbuilt_by\x18\x05 \x01(\tR\abuiltBy\x12\x14\n" +
+	"\x05notes\x18\x06 \x01(\tR\x05notes\"\x12\n" +
 	"\x10GetConfigRequest\"^\n" +
 	"\x11GetConfigResponse\x125\n" +
 	"\x06config\x18\x01 \x01(\v2\x1d.bundlepilot.config.v1.ConfigR\x06config\x12\x12\n" +
@@ -2751,13 +3098,22 @@ const file_bundlepilot_gateway_v1_gateway_proto_rawDesc = "" +
 	"\x06config\x18\x01 \x01(\v2\x1d.bundlepilot.config.v1.ConfigR\x06config\"b\n" +
 	"\x13CheckConfigResponse\x12\x14\n" +
 	"\x05error\x18\x01 \x01(\tR\x05error\x125\n" +
-	"\x06issues\x18\x02 \x03(\v2\x1d.bundlepilot.gateway.v1.IssueR\x06issues\"`\n" +
+	"\x06issues\x18\x02 \x03(\v2\x1d.bundlepilot.gateway.v1.IssueR\x06issues\"t\n" +
 	"\x13UpdateConfigRequest\x125\n" +
 	"\x06config\x18\x01 \x01(\v2\x1d.bundlepilot.config.v1.ConfigR\x06config\x12\x12\n" +
-	"\x04etag\x18\x02 \x01(\tR\x04etag\"a\n" +
+	"\x04etag\x18\x02 \x01(\tR\x04etag\x12\x12\n" +
+	"\x04note\x18\x03 \x01(\tR\x04note\"a\n" +
 	"\x14UpdateConfigResponse\x12\x12\n" +
 	"\x04etag\x18\x01 \x01(\tR\x04etag\x125\n" +
-	"\x06issues\x18\x02 \x03(\v2\x1d.bundlepilot.gateway.v1.IssueR\x06issues\"u\n" +
+	"\x06issues\x18\x02 \x03(\v2\x1d.bundlepilot.gateway.v1.IssueR\x06issues\"K\n" +
+	"\x12CheckSourceRequest\x125\n" +
+	"\x06source\x18\x01 \x01(\v2\x1d.bundlepilot.config.v1.SourceR\x06source\"\x98\x01\n" +
+	"\x13CheckSourceResponse\x12\x14\n" +
+	"\x05error\x18\x01 \x01(\tR\x05error\x12\x12\n" +
+	"\x04zips\x18\x02 \x01(\x03R\x04zips\x12\x1a\n" +
+	"\bversions\x18\x03 \x03(\tR\bversions\x12!\n" +
+	"\fwould_remove\x18\x04 \x03(\tR\vwouldRemove\x12\x18\n" +
+	"\aignored\x18\x05 \x03(\tR\aignored\"u\n" +
 	"\rDecideRequest\x12-\n" +
 	"\x05facts\x18\x01 \x01(\v2\x17.google.protobuf.StructR\x05facts\x125\n" +
 	"\x06config\x18\x02 \x01(\v2\x1d.bundlepilot.config.v1.ConfigR\x06config\"\xb5\x01\n" +
@@ -2783,12 +3139,13 @@ const file_bundlepilot_gateway_v1_gateway_proto_rawDesc = "" +
 	"\x05limit\x18\x01 \x01(\x05R\x05limit\x12\x18\n" +
 	"\aconfigs\x18\x02 \x01(\bR\aconfigs\"U\n" +
 	"\x13ListHistoryResponse\x12>\n" +
-	"\trevisions\x18\x01 \x03(\v2 .bundlepilot.gateway.v1.RevisionR\trevisions\"\x8d\x01\n" +
+	"\trevisions\x18\x01 \x03(\v2 .bundlepilot.gateway.v1.RevisionR\trevisions\"\xa1\x01\n" +
 	"\bRevision\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12*\n" +
 	"\x02at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\x12\x0e\n" +
 	"\x02by\x18\x03 \x01(\tR\x02by\x125\n" +
-	"\x06config\x18\x04 \x01(\v2\x1d.bundlepilot.config.v1.ConfigR\x06config\"$\n" +
+	"\x06config\x18\x04 \x01(\v2\x1d.bundlepilot.config.v1.ConfigR\x06config\x12\x12\n" +
+	"\x04note\x18\x05 \x01(\tR\x04note\"$\n" +
 	"\x12GetRevisionRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"L\n" +
 	"\x13GetRevisionResponse\x125\n" +
@@ -2799,14 +3156,19 @@ const file_bundlepilot_gateway_v1_gateway_proto_rawDesc = "" +
 	"\x12SetBlockedResponse\"\x13\n" +
 	"\x11ListTokensRequest\"K\n" +
 	"\x12ListTokensResponse\x125\n" +
-	"\x06tokens\x18\x01 \x03(\v2\x1d.bundlepilot.gateway.v1.TokenR\x06tokens\"g\n" +
+	"\x06tokens\x18\x01 \x03(\v2\x1d.bundlepilot.gateway.v1.TokenR\x06tokens\"\xdb\x01\n" +
 	"\x05Token\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05scope\x18\x02 \x01(\tR\x05scope\x124\n" +
-	"\acreated\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\acreated\">\n" +
+	"\acreated\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\acreated\x127\n" +
+	"\tlast_used\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\blastUsed\x129\n" +
+	"\n" +
+	"expires_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\"y\n" +
 	"\x12CreateTokenRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
-	"\x05scope\x18\x02 \x01(\tR\x05scope\"+\n" +
+	"\x05scope\x18\x02 \x01(\tR\x05scope\x129\n" +
+	"\n" +
+	"expires_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\"+\n" +
 	"\x13CreateTokenResponse\x12\x14\n" +
 	"\x05token\x18\x01 \x01(\tR\x05token\"(\n" +
 	"\x12DeleteTokenRequest\x12\x12\n" +
@@ -2824,7 +3186,7 @@ const file_bundlepilot_gateway_v1_gateway_proto_rawDesc = "" +
 	"\x05after\x18\x01 \x01(\x03R\x05after\x12\x14\n" +
 	"\x05limit\x18\x02 \x01(\x05R\x05limit\"K\n" +
 	"\x12ListEventsResponse\x125\n" +
-	"\x06events\x18\x01 \x03(\v2\x1d.bundlepilot.gateway.v1.EventR\x06events\"\xb1\x01\n" +
+	"\x06events\x18\x01 \x03(\v2\x1d.bundlepilot.gateway.v1.EventR\x06events\"\x85\x02\n" +
 	"\x05Event\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x03R\x02id\x12*\n" +
 	"\x02at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\x12\x12\n" +
@@ -2832,7 +3194,12 @@ const file_bundlepilot_gateway_v1_gateway_proto_rawDesc = "" +
 	"\x02by\x18\x04 \x01(\tR\x02by\x12\x16\n" +
 	"\x06bundle\x18\x05 \x01(\tR\x06bundle\x12\x14\n" +
 	"\x05token\x18\x06 \x01(\tR\x05token\x12\x1a\n" +
-	"\brevision\x18\a \x01(\tR\brevision2\xfc\r\n" +
+	"\brevision\x18\a \x01(\tR\brevision\x12\x12\n" +
+	"\x04note\x18\b \x01(\tR\x04note\x12\x12\n" +
+	"\x04code\x18\t \x01(\tR\x04code\x12\x12\n" +
+	"\x04rule\x18\n" +
+	" \x01(\tR\x04rule\x12\x16\n" +
+	"\x06reason\x18\v \x01(\tR\x06reason2\xe4\x0e\n" +
 	"\x0eGatewayService\x12Z\n" +
 	"\aGetInfo\x12&.bundlepilot.gateway.v1.GetInfoRequest\x1a'.bundlepilot.gateway.v1.GetInfoResponse\x12T\n" +
 	"\x05Login\x12$.bundlepilot.gateway.v1.LoginRequest\x1a%.bundlepilot.gateway.v1.LoginResponse\x12o\n" +
@@ -2843,7 +3210,8 @@ const file_bundlepilot_gateway_v1_gateway_proto_rawDesc = "" +
 	"\n" +
 	"ListEvents\x12).bundlepilot.gateway.v1.ListEventsRequest\x1a*.bundlepilot.gateway.v1.ListEventsResponse\x12`\n" +
 	"\tGetConfig\x12(.bundlepilot.gateway.v1.GetConfigRequest\x1a).bundlepilot.gateway.v1.GetConfigResponse\x12f\n" +
-	"\vCheckConfig\x12*.bundlepilot.gateway.v1.CheckConfigRequest\x1a+.bundlepilot.gateway.v1.CheckConfigResponse\x12i\n" +
+	"\vCheckConfig\x12*.bundlepilot.gateway.v1.CheckConfigRequest\x1a+.bundlepilot.gateway.v1.CheckConfigResponse\x12f\n" +
+	"\vCheckSource\x12*.bundlepilot.gateway.v1.CheckSourceRequest\x1a+.bundlepilot.gateway.v1.CheckSourceResponse\x12i\n" +
 	"\fUpdateConfig\x12+.bundlepilot.gateway.v1.UpdateConfigRequest\x1a,.bundlepilot.gateway.v1.UpdateConfigResponse\x12W\n" +
 	"\x06Decide\x12%.bundlepilot.gateway.v1.DecideRequest\x1a&.bundlepilot.gateway.v1.DecideResponse\x12f\n" +
 	"\vListHistory\x12*.bundlepilot.gateway.v1.ListHistoryRequest\x1a+.bundlepilot.gateway.v1.ListHistoryResponse\x12f\n" +
@@ -2868,7 +3236,7 @@ func file_bundlepilot_gateway_v1_gateway_proto_rawDescGZIP() []byte {
 	return file_bundlepilot_gateway_v1_gateway_proto_rawDescData
 }
 
-var file_bundlepilot_gateway_v1_gateway_proto_msgTypes = make([]protoimpl.MessageInfo, 50)
+var file_bundlepilot_gateway_v1_gateway_proto_msgTypes = make([]protoimpl.MessageInfo, 53)
 var file_bundlepilot_gateway_v1_gateway_proto_goTypes = []any{
 	(*GetInfoRequest)(nil),         // 0: bundlepilot.gateway.v1.GetInfoRequest
 	(*GetInfoResponse)(nil),        // 1: bundlepilot.gateway.v1.GetInfoResponse
@@ -2885,125 +3253,137 @@ var file_bundlepilot_gateway_v1_gateway_proto_goTypes = []any{
 	(*Counts)(nil),                 // 12: bundlepilot.gateway.v1.Counts
 	(*Sync)(nil),                   // 13: bundlepilot.gateway.v1.Sync
 	(*Bundle)(nil),                 // 14: bundlepilot.gateway.v1.Bundle
-	(*GetConfigRequest)(nil),       // 15: bundlepilot.gateway.v1.GetConfigRequest
-	(*GetConfigResponse)(nil),      // 16: bundlepilot.gateway.v1.GetConfigResponse
-	(*CheckConfigRequest)(nil),     // 17: bundlepilot.gateway.v1.CheckConfigRequest
-	(*CheckConfigResponse)(nil),    // 18: bundlepilot.gateway.v1.CheckConfigResponse
-	(*UpdateConfigRequest)(nil),    // 19: bundlepilot.gateway.v1.UpdateConfigRequest
-	(*UpdateConfigResponse)(nil),   // 20: bundlepilot.gateway.v1.UpdateConfigResponse
-	(*DecideRequest)(nil),          // 21: bundlepilot.gateway.v1.DecideRequest
-	(*DecideResponse)(nil),         // 22: bundlepilot.gateway.v1.DecideResponse
-	(*Match)(nil),                  // 23: bundlepilot.gateway.v1.Match
-	(*Skip)(nil),                   // 24: bundlepilot.gateway.v1.Skip
-	(*ListHistoryRequest)(nil),     // 25: bundlepilot.gateway.v1.ListHistoryRequest
-	(*ListHistoryResponse)(nil),    // 26: bundlepilot.gateway.v1.ListHistoryResponse
-	(*Revision)(nil),               // 27: bundlepilot.gateway.v1.Revision
-	(*GetRevisionRequest)(nil),     // 28: bundlepilot.gateway.v1.GetRevisionRequest
-	(*GetRevisionResponse)(nil),    // 29: bundlepilot.gateway.v1.GetRevisionResponse
-	(*SetBlockedRequest)(nil),      // 30: bundlepilot.gateway.v1.SetBlockedRequest
-	(*SetBlockedResponse)(nil),     // 31: bundlepilot.gateway.v1.SetBlockedResponse
-	(*ListTokensRequest)(nil),      // 32: bundlepilot.gateway.v1.ListTokensRequest
-	(*ListTokensResponse)(nil),     // 33: bundlepilot.gateway.v1.ListTokensResponse
-	(*Token)(nil),                  // 34: bundlepilot.gateway.v1.Token
-	(*CreateTokenRequest)(nil),     // 35: bundlepilot.gateway.v1.CreateTokenRequest
-	(*CreateTokenResponse)(nil),    // 36: bundlepilot.gateway.v1.CreateTokenResponse
-	(*DeleteTokenRequest)(nil),     // 37: bundlepilot.gateway.v1.DeleteTokenRequest
-	(*DeleteTokenResponse)(nil),    // 38: bundlepilot.gateway.v1.DeleteTokenResponse
-	(*ReloadRequest)(nil),          // 39: bundlepilot.gateway.v1.ReloadRequest
-	(*ReloadResponse)(nil),         // 40: bundlepilot.gateway.v1.ReloadResponse
-	(*WatchRequest)(nil),           // 41: bundlepilot.gateway.v1.WatchRequest
-	(*WatchResponse)(nil),          // 42: bundlepilot.gateway.v1.WatchResponse
-	(*ListEventsRequest)(nil),      // 43: bundlepilot.gateway.v1.ListEventsRequest
-	(*ListEventsResponse)(nil),     // 44: bundlepilot.gateway.v1.ListEventsResponse
-	(*Event)(nil),                  // 45: bundlepilot.gateway.v1.Event
-	nil,                            // 46: bundlepilot.gateway.v1.GetStatusResponse.DecisionsEntry
-	nil,                            // 47: bundlepilot.gateway.v1.GetStatusResponse.DecisionsByBundleEntry
-	nil,                            // 48: bundlepilot.gateway.v1.Traffic.ByBundleEntry
-	nil,                            // 49: bundlepilot.gateway.v1.Traffic.ByViaEntry
-	(*timestamppb.Timestamp)(nil),  // 50: google.protobuf.Timestamp
-	(*configv1.Config)(nil),        // 51: bundlepilot.config.v1.Config
-	(*structpb.Struct)(nil),        // 52: google.protobuf.Struct
+	(*Release)(nil),                // 15: bundlepilot.gateway.v1.Release
+	(*GetConfigRequest)(nil),       // 16: bundlepilot.gateway.v1.GetConfigRequest
+	(*GetConfigResponse)(nil),      // 17: bundlepilot.gateway.v1.GetConfigResponse
+	(*CheckConfigRequest)(nil),     // 18: bundlepilot.gateway.v1.CheckConfigRequest
+	(*CheckConfigResponse)(nil),    // 19: bundlepilot.gateway.v1.CheckConfigResponse
+	(*UpdateConfigRequest)(nil),    // 20: bundlepilot.gateway.v1.UpdateConfigRequest
+	(*UpdateConfigResponse)(nil),   // 21: bundlepilot.gateway.v1.UpdateConfigResponse
+	(*CheckSourceRequest)(nil),     // 22: bundlepilot.gateway.v1.CheckSourceRequest
+	(*CheckSourceResponse)(nil),    // 23: bundlepilot.gateway.v1.CheckSourceResponse
+	(*DecideRequest)(nil),          // 24: bundlepilot.gateway.v1.DecideRequest
+	(*DecideResponse)(nil),         // 25: bundlepilot.gateway.v1.DecideResponse
+	(*Match)(nil),                  // 26: bundlepilot.gateway.v1.Match
+	(*Skip)(nil),                   // 27: bundlepilot.gateway.v1.Skip
+	(*ListHistoryRequest)(nil),     // 28: bundlepilot.gateway.v1.ListHistoryRequest
+	(*ListHistoryResponse)(nil),    // 29: bundlepilot.gateway.v1.ListHistoryResponse
+	(*Revision)(nil),               // 30: bundlepilot.gateway.v1.Revision
+	(*GetRevisionRequest)(nil),     // 31: bundlepilot.gateway.v1.GetRevisionRequest
+	(*GetRevisionResponse)(nil),    // 32: bundlepilot.gateway.v1.GetRevisionResponse
+	(*SetBlockedRequest)(nil),      // 33: bundlepilot.gateway.v1.SetBlockedRequest
+	(*SetBlockedResponse)(nil),     // 34: bundlepilot.gateway.v1.SetBlockedResponse
+	(*ListTokensRequest)(nil),      // 35: bundlepilot.gateway.v1.ListTokensRequest
+	(*ListTokensResponse)(nil),     // 36: bundlepilot.gateway.v1.ListTokensResponse
+	(*Token)(nil),                  // 37: bundlepilot.gateway.v1.Token
+	(*CreateTokenRequest)(nil),     // 38: bundlepilot.gateway.v1.CreateTokenRequest
+	(*CreateTokenResponse)(nil),    // 39: bundlepilot.gateway.v1.CreateTokenResponse
+	(*DeleteTokenRequest)(nil),     // 40: bundlepilot.gateway.v1.DeleteTokenRequest
+	(*DeleteTokenResponse)(nil),    // 41: bundlepilot.gateway.v1.DeleteTokenResponse
+	(*ReloadRequest)(nil),          // 42: bundlepilot.gateway.v1.ReloadRequest
+	(*ReloadResponse)(nil),         // 43: bundlepilot.gateway.v1.ReloadResponse
+	(*WatchRequest)(nil),           // 44: bundlepilot.gateway.v1.WatchRequest
+	(*WatchResponse)(nil),          // 45: bundlepilot.gateway.v1.WatchResponse
+	(*ListEventsRequest)(nil),      // 46: bundlepilot.gateway.v1.ListEventsRequest
+	(*ListEventsResponse)(nil),     // 47: bundlepilot.gateway.v1.ListEventsResponse
+	(*Event)(nil),                  // 48: bundlepilot.gateway.v1.Event
+	nil,                            // 49: bundlepilot.gateway.v1.GetStatusResponse.DecisionsEntry
+	nil,                            // 50: bundlepilot.gateway.v1.GetStatusResponse.DecisionsByBundleEntry
+	nil,                            // 51: bundlepilot.gateway.v1.Traffic.ByBundleEntry
+	nil,                            // 52: bundlepilot.gateway.v1.Traffic.ByViaEntry
+	(*timestamppb.Timestamp)(nil),  // 53: google.protobuf.Timestamp
+	(*configv1.Config)(nil),        // 54: bundlepilot.config.v1.Config
+	(*configv1.Source)(nil),        // 55: bundlepilot.config.v1.Source
+	(*structpb.Struct)(nil),        // 56: google.protobuf.Struct
 }
 var file_bundlepilot_gateway_v1_gateway_proto_depIdxs = []int32{
-	50, // 0: bundlepilot.gateway.v1.LoginResponse.expires_at:type_name -> google.protobuf.Timestamp
-	50, // 1: bundlepilot.gateway.v1.RefreshSessionResponse.expires_at:type_name -> google.protobuf.Timestamp
-	50, // 2: bundlepilot.gateway.v1.WhoAmIResponse.expires_at:type_name -> google.protobuf.Timestamp
-	50, // 3: bundlepilot.gateway.v1.GetStatusResponse.started_at:type_name -> google.protobuf.Timestamp
+	53, // 0: bundlepilot.gateway.v1.LoginResponse.expires_at:type_name -> google.protobuf.Timestamp
+	53, // 1: bundlepilot.gateway.v1.RefreshSessionResponse.expires_at:type_name -> google.protobuf.Timestamp
+	53, // 2: bundlepilot.gateway.v1.WhoAmIResponse.expires_at:type_name -> google.protobuf.Timestamp
+	53, // 3: bundlepilot.gateway.v1.GetStatusResponse.started_at:type_name -> google.protobuf.Timestamp
 	13, // 4: bundlepilot.gateway.v1.GetStatusResponse.sync:type_name -> bundlepilot.gateway.v1.Sync
-	50, // 5: bundlepilot.gateway.v1.GetStatusResponse.loaded_at:type_name -> google.protobuf.Timestamp
+	53, // 5: bundlepilot.gateway.v1.GetStatusResponse.loaded_at:type_name -> google.protobuf.Timestamp
 	10, // 6: bundlepilot.gateway.v1.GetStatusResponse.errors:type_name -> bundlepilot.gateway.v1.Issue
 	14, // 7: bundlepilot.gateway.v1.GetStatusResponse.bundles:type_name -> bundlepilot.gateway.v1.Bundle
-	46, // 8: bundlepilot.gateway.v1.GetStatusResponse.decisions:type_name -> bundlepilot.gateway.v1.GetStatusResponse.DecisionsEntry
-	47, // 9: bundlepilot.gateway.v1.GetStatusResponse.decisions_by_bundle:type_name -> bundlepilot.gateway.v1.GetStatusResponse.DecisionsByBundleEntry
+	49, // 8: bundlepilot.gateway.v1.GetStatusResponse.decisions:type_name -> bundlepilot.gateway.v1.GetStatusResponse.DecisionsEntry
+	50, // 9: bundlepilot.gateway.v1.GetStatusResponse.decisions_by_bundle:type_name -> bundlepilot.gateway.v1.GetStatusResponse.DecisionsByBundleEntry
 	10, // 10: bundlepilot.gateway.v1.GetStatusResponse.issues:type_name -> bundlepilot.gateway.v1.Issue
 	11, // 11: bundlepilot.gateway.v1.GetStatusResponse.traffic:type_name -> bundlepilot.gateway.v1.Traffic
-	50, // 12: bundlepilot.gateway.v1.Traffic.start:type_name -> google.protobuf.Timestamp
-	48, // 13: bundlepilot.gateway.v1.Traffic.by_bundle:type_name -> bundlepilot.gateway.v1.Traffic.ByBundleEntry
-	49, // 14: bundlepilot.gateway.v1.Traffic.by_via:type_name -> bundlepilot.gateway.v1.Traffic.ByViaEntry
-	50, // 15: bundlepilot.gateway.v1.Sync.at:type_name -> google.protobuf.Timestamp
-	50, // 16: bundlepilot.gateway.v1.Bundle.mod_time:type_name -> google.protobuf.Timestamp
-	51, // 17: bundlepilot.gateway.v1.GetConfigResponse.config:type_name -> bundlepilot.config.v1.Config
-	51, // 18: bundlepilot.gateway.v1.CheckConfigRequest.config:type_name -> bundlepilot.config.v1.Config
-	10, // 19: bundlepilot.gateway.v1.CheckConfigResponse.issues:type_name -> bundlepilot.gateway.v1.Issue
-	51, // 20: bundlepilot.gateway.v1.UpdateConfigRequest.config:type_name -> bundlepilot.config.v1.Config
-	10, // 21: bundlepilot.gateway.v1.UpdateConfigResponse.issues:type_name -> bundlepilot.gateway.v1.Issue
-	52, // 22: bundlepilot.gateway.v1.DecideRequest.facts:type_name -> google.protobuf.Struct
-	51, // 23: bundlepilot.gateway.v1.DecideRequest.config:type_name -> bundlepilot.config.v1.Config
-	24, // 24: bundlepilot.gateway.v1.DecideResponse.why:type_name -> bundlepilot.gateway.v1.Skip
-	23, // 25: bundlepilot.gateway.v1.DecideResponse.match:type_name -> bundlepilot.gateway.v1.Match
-	27, // 26: bundlepilot.gateway.v1.ListHistoryResponse.revisions:type_name -> bundlepilot.gateway.v1.Revision
-	50, // 27: bundlepilot.gateway.v1.Revision.at:type_name -> google.protobuf.Timestamp
-	51, // 28: bundlepilot.gateway.v1.Revision.config:type_name -> bundlepilot.config.v1.Config
-	51, // 29: bundlepilot.gateway.v1.GetRevisionResponse.config:type_name -> bundlepilot.config.v1.Config
-	34, // 30: bundlepilot.gateway.v1.ListTokensResponse.tokens:type_name -> bundlepilot.gateway.v1.Token
-	50, // 31: bundlepilot.gateway.v1.Token.created:type_name -> google.protobuf.Timestamp
-	9,  // 32: bundlepilot.gateway.v1.WatchResponse.status:type_name -> bundlepilot.gateway.v1.GetStatusResponse
-	45, // 33: bundlepilot.gateway.v1.WatchResponse.events:type_name -> bundlepilot.gateway.v1.Event
-	45, // 34: bundlepilot.gateway.v1.ListEventsResponse.events:type_name -> bundlepilot.gateway.v1.Event
-	50, // 35: bundlepilot.gateway.v1.Event.at:type_name -> google.protobuf.Timestamp
-	12, // 36: bundlepilot.gateway.v1.Traffic.ByBundleEntry.value:type_name -> bundlepilot.gateway.v1.Counts
-	12, // 37: bundlepilot.gateway.v1.Traffic.ByViaEntry.value:type_name -> bundlepilot.gateway.v1.Counts
-	0,  // 38: bundlepilot.gateway.v1.GatewayService.GetInfo:input_type -> bundlepilot.gateway.v1.GetInfoRequest
-	2,  // 39: bundlepilot.gateway.v1.GatewayService.Login:input_type -> bundlepilot.gateway.v1.LoginRequest
-	4,  // 40: bundlepilot.gateway.v1.GatewayService.RefreshSession:input_type -> bundlepilot.gateway.v1.RefreshSessionRequest
-	6,  // 41: bundlepilot.gateway.v1.GatewayService.WhoAmI:input_type -> bundlepilot.gateway.v1.WhoAmIRequest
-	8,  // 42: bundlepilot.gateway.v1.GatewayService.GetStatus:input_type -> bundlepilot.gateway.v1.GetStatusRequest
-	41, // 43: bundlepilot.gateway.v1.GatewayService.Watch:input_type -> bundlepilot.gateway.v1.WatchRequest
-	43, // 44: bundlepilot.gateway.v1.GatewayService.ListEvents:input_type -> bundlepilot.gateway.v1.ListEventsRequest
-	15, // 45: bundlepilot.gateway.v1.GatewayService.GetConfig:input_type -> bundlepilot.gateway.v1.GetConfigRequest
-	17, // 46: bundlepilot.gateway.v1.GatewayService.CheckConfig:input_type -> bundlepilot.gateway.v1.CheckConfigRequest
-	19, // 47: bundlepilot.gateway.v1.GatewayService.UpdateConfig:input_type -> bundlepilot.gateway.v1.UpdateConfigRequest
-	21, // 48: bundlepilot.gateway.v1.GatewayService.Decide:input_type -> bundlepilot.gateway.v1.DecideRequest
-	25, // 49: bundlepilot.gateway.v1.GatewayService.ListHistory:input_type -> bundlepilot.gateway.v1.ListHistoryRequest
-	28, // 50: bundlepilot.gateway.v1.GatewayService.GetRevision:input_type -> bundlepilot.gateway.v1.GetRevisionRequest
-	30, // 51: bundlepilot.gateway.v1.GatewayService.SetBlocked:input_type -> bundlepilot.gateway.v1.SetBlockedRequest
-	32, // 52: bundlepilot.gateway.v1.GatewayService.ListTokens:input_type -> bundlepilot.gateway.v1.ListTokensRequest
-	35, // 53: bundlepilot.gateway.v1.GatewayService.CreateToken:input_type -> bundlepilot.gateway.v1.CreateTokenRequest
-	37, // 54: bundlepilot.gateway.v1.GatewayService.DeleteToken:input_type -> bundlepilot.gateway.v1.DeleteTokenRequest
-	39, // 55: bundlepilot.gateway.v1.GatewayService.Reload:input_type -> bundlepilot.gateway.v1.ReloadRequest
-	1,  // 56: bundlepilot.gateway.v1.GatewayService.GetInfo:output_type -> bundlepilot.gateway.v1.GetInfoResponse
-	3,  // 57: bundlepilot.gateway.v1.GatewayService.Login:output_type -> bundlepilot.gateway.v1.LoginResponse
-	5,  // 58: bundlepilot.gateway.v1.GatewayService.RefreshSession:output_type -> bundlepilot.gateway.v1.RefreshSessionResponse
-	7,  // 59: bundlepilot.gateway.v1.GatewayService.WhoAmI:output_type -> bundlepilot.gateway.v1.WhoAmIResponse
-	9,  // 60: bundlepilot.gateway.v1.GatewayService.GetStatus:output_type -> bundlepilot.gateway.v1.GetStatusResponse
-	42, // 61: bundlepilot.gateway.v1.GatewayService.Watch:output_type -> bundlepilot.gateway.v1.WatchResponse
-	44, // 62: bundlepilot.gateway.v1.GatewayService.ListEvents:output_type -> bundlepilot.gateway.v1.ListEventsResponse
-	16, // 63: bundlepilot.gateway.v1.GatewayService.GetConfig:output_type -> bundlepilot.gateway.v1.GetConfigResponse
-	18, // 64: bundlepilot.gateway.v1.GatewayService.CheckConfig:output_type -> bundlepilot.gateway.v1.CheckConfigResponse
-	20, // 65: bundlepilot.gateway.v1.GatewayService.UpdateConfig:output_type -> bundlepilot.gateway.v1.UpdateConfigResponse
-	22, // 66: bundlepilot.gateway.v1.GatewayService.Decide:output_type -> bundlepilot.gateway.v1.DecideResponse
-	26, // 67: bundlepilot.gateway.v1.GatewayService.ListHistory:output_type -> bundlepilot.gateway.v1.ListHistoryResponse
-	29, // 68: bundlepilot.gateway.v1.GatewayService.GetRevision:output_type -> bundlepilot.gateway.v1.GetRevisionResponse
-	31, // 69: bundlepilot.gateway.v1.GatewayService.SetBlocked:output_type -> bundlepilot.gateway.v1.SetBlockedResponse
-	33, // 70: bundlepilot.gateway.v1.GatewayService.ListTokens:output_type -> bundlepilot.gateway.v1.ListTokensResponse
-	36, // 71: bundlepilot.gateway.v1.GatewayService.CreateToken:output_type -> bundlepilot.gateway.v1.CreateTokenResponse
-	38, // 72: bundlepilot.gateway.v1.GatewayService.DeleteToken:output_type -> bundlepilot.gateway.v1.DeleteTokenResponse
-	40, // 73: bundlepilot.gateway.v1.GatewayService.Reload:output_type -> bundlepilot.gateway.v1.ReloadResponse
-	56, // [56:74] is the sub-list for method output_type
-	38, // [38:56] is the sub-list for method input_type
-	38, // [38:38] is the sub-list for extension type_name
-	38, // [38:38] is the sub-list for extension extendee
-	0,  // [0:38] is the sub-list for field type_name
+	53, // 12: bundlepilot.gateway.v1.Traffic.start:type_name -> google.protobuf.Timestamp
+	51, // 13: bundlepilot.gateway.v1.Traffic.by_bundle:type_name -> bundlepilot.gateway.v1.Traffic.ByBundleEntry
+	52, // 14: bundlepilot.gateway.v1.Traffic.by_via:type_name -> bundlepilot.gateway.v1.Traffic.ByViaEntry
+	53, // 15: bundlepilot.gateway.v1.Sync.at:type_name -> google.protobuf.Timestamp
+	53, // 16: bundlepilot.gateway.v1.Bundle.mod_time:type_name -> google.protobuf.Timestamp
+	15, // 17: bundlepilot.gateway.v1.Bundle.release:type_name -> bundlepilot.gateway.v1.Release
+	53, // 18: bundlepilot.gateway.v1.Release.built_at:type_name -> google.protobuf.Timestamp
+	54, // 19: bundlepilot.gateway.v1.GetConfigResponse.config:type_name -> bundlepilot.config.v1.Config
+	54, // 20: bundlepilot.gateway.v1.CheckConfigRequest.config:type_name -> bundlepilot.config.v1.Config
+	10, // 21: bundlepilot.gateway.v1.CheckConfigResponse.issues:type_name -> bundlepilot.gateway.v1.Issue
+	54, // 22: bundlepilot.gateway.v1.UpdateConfigRequest.config:type_name -> bundlepilot.config.v1.Config
+	10, // 23: bundlepilot.gateway.v1.UpdateConfigResponse.issues:type_name -> bundlepilot.gateway.v1.Issue
+	55, // 24: bundlepilot.gateway.v1.CheckSourceRequest.source:type_name -> bundlepilot.config.v1.Source
+	56, // 25: bundlepilot.gateway.v1.DecideRequest.facts:type_name -> google.protobuf.Struct
+	54, // 26: bundlepilot.gateway.v1.DecideRequest.config:type_name -> bundlepilot.config.v1.Config
+	27, // 27: bundlepilot.gateway.v1.DecideResponse.why:type_name -> bundlepilot.gateway.v1.Skip
+	26, // 28: bundlepilot.gateway.v1.DecideResponse.match:type_name -> bundlepilot.gateway.v1.Match
+	30, // 29: bundlepilot.gateway.v1.ListHistoryResponse.revisions:type_name -> bundlepilot.gateway.v1.Revision
+	53, // 30: bundlepilot.gateway.v1.Revision.at:type_name -> google.protobuf.Timestamp
+	54, // 31: bundlepilot.gateway.v1.Revision.config:type_name -> bundlepilot.config.v1.Config
+	54, // 32: bundlepilot.gateway.v1.GetRevisionResponse.config:type_name -> bundlepilot.config.v1.Config
+	37, // 33: bundlepilot.gateway.v1.ListTokensResponse.tokens:type_name -> bundlepilot.gateway.v1.Token
+	53, // 34: bundlepilot.gateway.v1.Token.created:type_name -> google.protobuf.Timestamp
+	53, // 35: bundlepilot.gateway.v1.Token.last_used:type_name -> google.protobuf.Timestamp
+	53, // 36: bundlepilot.gateway.v1.Token.expires_at:type_name -> google.protobuf.Timestamp
+	53, // 37: bundlepilot.gateway.v1.CreateTokenRequest.expires_at:type_name -> google.protobuf.Timestamp
+	9,  // 38: bundlepilot.gateway.v1.WatchResponse.status:type_name -> bundlepilot.gateway.v1.GetStatusResponse
+	48, // 39: bundlepilot.gateway.v1.WatchResponse.events:type_name -> bundlepilot.gateway.v1.Event
+	48, // 40: bundlepilot.gateway.v1.ListEventsResponse.events:type_name -> bundlepilot.gateway.v1.Event
+	53, // 41: bundlepilot.gateway.v1.Event.at:type_name -> google.protobuf.Timestamp
+	12, // 42: bundlepilot.gateway.v1.Traffic.ByBundleEntry.value:type_name -> bundlepilot.gateway.v1.Counts
+	12, // 43: bundlepilot.gateway.v1.Traffic.ByViaEntry.value:type_name -> bundlepilot.gateway.v1.Counts
+	0,  // 44: bundlepilot.gateway.v1.GatewayService.GetInfo:input_type -> bundlepilot.gateway.v1.GetInfoRequest
+	2,  // 45: bundlepilot.gateway.v1.GatewayService.Login:input_type -> bundlepilot.gateway.v1.LoginRequest
+	4,  // 46: bundlepilot.gateway.v1.GatewayService.RefreshSession:input_type -> bundlepilot.gateway.v1.RefreshSessionRequest
+	6,  // 47: bundlepilot.gateway.v1.GatewayService.WhoAmI:input_type -> bundlepilot.gateway.v1.WhoAmIRequest
+	8,  // 48: bundlepilot.gateway.v1.GatewayService.GetStatus:input_type -> bundlepilot.gateway.v1.GetStatusRequest
+	44, // 49: bundlepilot.gateway.v1.GatewayService.Watch:input_type -> bundlepilot.gateway.v1.WatchRequest
+	46, // 50: bundlepilot.gateway.v1.GatewayService.ListEvents:input_type -> bundlepilot.gateway.v1.ListEventsRequest
+	16, // 51: bundlepilot.gateway.v1.GatewayService.GetConfig:input_type -> bundlepilot.gateway.v1.GetConfigRequest
+	18, // 52: bundlepilot.gateway.v1.GatewayService.CheckConfig:input_type -> bundlepilot.gateway.v1.CheckConfigRequest
+	22, // 53: bundlepilot.gateway.v1.GatewayService.CheckSource:input_type -> bundlepilot.gateway.v1.CheckSourceRequest
+	20, // 54: bundlepilot.gateway.v1.GatewayService.UpdateConfig:input_type -> bundlepilot.gateway.v1.UpdateConfigRequest
+	24, // 55: bundlepilot.gateway.v1.GatewayService.Decide:input_type -> bundlepilot.gateway.v1.DecideRequest
+	28, // 56: bundlepilot.gateway.v1.GatewayService.ListHistory:input_type -> bundlepilot.gateway.v1.ListHistoryRequest
+	31, // 57: bundlepilot.gateway.v1.GatewayService.GetRevision:input_type -> bundlepilot.gateway.v1.GetRevisionRequest
+	33, // 58: bundlepilot.gateway.v1.GatewayService.SetBlocked:input_type -> bundlepilot.gateway.v1.SetBlockedRequest
+	35, // 59: bundlepilot.gateway.v1.GatewayService.ListTokens:input_type -> bundlepilot.gateway.v1.ListTokensRequest
+	38, // 60: bundlepilot.gateway.v1.GatewayService.CreateToken:input_type -> bundlepilot.gateway.v1.CreateTokenRequest
+	40, // 61: bundlepilot.gateway.v1.GatewayService.DeleteToken:input_type -> bundlepilot.gateway.v1.DeleteTokenRequest
+	42, // 62: bundlepilot.gateway.v1.GatewayService.Reload:input_type -> bundlepilot.gateway.v1.ReloadRequest
+	1,  // 63: bundlepilot.gateway.v1.GatewayService.GetInfo:output_type -> bundlepilot.gateway.v1.GetInfoResponse
+	3,  // 64: bundlepilot.gateway.v1.GatewayService.Login:output_type -> bundlepilot.gateway.v1.LoginResponse
+	5,  // 65: bundlepilot.gateway.v1.GatewayService.RefreshSession:output_type -> bundlepilot.gateway.v1.RefreshSessionResponse
+	7,  // 66: bundlepilot.gateway.v1.GatewayService.WhoAmI:output_type -> bundlepilot.gateway.v1.WhoAmIResponse
+	9,  // 67: bundlepilot.gateway.v1.GatewayService.GetStatus:output_type -> bundlepilot.gateway.v1.GetStatusResponse
+	45, // 68: bundlepilot.gateway.v1.GatewayService.Watch:output_type -> bundlepilot.gateway.v1.WatchResponse
+	47, // 69: bundlepilot.gateway.v1.GatewayService.ListEvents:output_type -> bundlepilot.gateway.v1.ListEventsResponse
+	17, // 70: bundlepilot.gateway.v1.GatewayService.GetConfig:output_type -> bundlepilot.gateway.v1.GetConfigResponse
+	19, // 71: bundlepilot.gateway.v1.GatewayService.CheckConfig:output_type -> bundlepilot.gateway.v1.CheckConfigResponse
+	23, // 72: bundlepilot.gateway.v1.GatewayService.CheckSource:output_type -> bundlepilot.gateway.v1.CheckSourceResponse
+	21, // 73: bundlepilot.gateway.v1.GatewayService.UpdateConfig:output_type -> bundlepilot.gateway.v1.UpdateConfigResponse
+	25, // 74: bundlepilot.gateway.v1.GatewayService.Decide:output_type -> bundlepilot.gateway.v1.DecideResponse
+	29, // 75: bundlepilot.gateway.v1.GatewayService.ListHistory:output_type -> bundlepilot.gateway.v1.ListHistoryResponse
+	32, // 76: bundlepilot.gateway.v1.GatewayService.GetRevision:output_type -> bundlepilot.gateway.v1.GetRevisionResponse
+	34, // 77: bundlepilot.gateway.v1.GatewayService.SetBlocked:output_type -> bundlepilot.gateway.v1.SetBlockedResponse
+	36, // 78: bundlepilot.gateway.v1.GatewayService.ListTokens:output_type -> bundlepilot.gateway.v1.ListTokensResponse
+	39, // 79: bundlepilot.gateway.v1.GatewayService.CreateToken:output_type -> bundlepilot.gateway.v1.CreateTokenResponse
+	41, // 80: bundlepilot.gateway.v1.GatewayService.DeleteToken:output_type -> bundlepilot.gateway.v1.DeleteTokenResponse
+	43, // 81: bundlepilot.gateway.v1.GatewayService.Reload:output_type -> bundlepilot.gateway.v1.ReloadResponse
+	63, // [63:82] is the sub-list for method output_type
+	44, // [44:63] is the sub-list for method input_type
+	44, // [44:44] is the sub-list for extension type_name
+	44, // [44:44] is the sub-list for extension extendee
+	0,  // [0:44] is the sub-list for field type_name
 }
 
 func init() { file_bundlepilot_gateway_v1_gateway_proto_init() }
@@ -3017,7 +3397,7 @@ func file_bundlepilot_gateway_v1_gateway_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_bundlepilot_gateway_v1_gateway_proto_rawDesc), len(file_bundlepilot_gateway_v1_gateway_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   50,
+			NumMessages:   53,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

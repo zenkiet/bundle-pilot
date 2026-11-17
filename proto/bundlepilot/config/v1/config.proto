@@ -35,6 +35,8 @@ message Token {
   string sha256 = 3;
   // RFC 3339.
   string created = 4;
+  // RFC 3339; empty: never.
+  string expires = 5;
 }
 
 // Revision is one saved config in DIST/history, secrets masked.
@@ -42,6 +44,7 @@ message Revision {
   string by = 1;
   // The Config, encoded.
   bytes config = 2;
+  string note = 3;
 }
 
 message Auth {

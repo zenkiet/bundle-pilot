@@ -153,7 +153,7 @@ func loadZip(f *os.File, pub ed25519.PublicKey, name string) (zipped, error) {
 	if ngsw := files["/ngsw.json"]; ngsw != nil {
 		assets["/ngsw.json"] = asset.New("/ngsw.json", ngsw.body, gzipped(ngsw.body))
 	}
-	base, link, native, head := indexMeta(index.body)
+	base, link, meta, head := indexMeta(index.body)
 	if head == 0 {
 		z.issues = append(z.issues, domain.Issue{
 			Code:   "no_head",
@@ -161,7 +161,7 @@ func loadZip(f *os.File, pub ed25519.PublicKey, name string) (zipped, error) {
 			Bundle: name,
 		})
 	}
-	z.bundle, err = domain.NewBundle(name, base, native, assets, stamp(index.body, name, head))
+	z.bundle, err = domain.NewBundle(name, base, meta, assets, stamp(index.body, name, head))
 	if err != nil {
 		return zipped{}, err
 	}
@@ -327,8 +327,8 @@ func gzipped(b []byte) []byte {
 }
 
 // indexMeta returns head as the offset just after <head>, 0 without one.
-func indexMeta(index []byte) (base string, links []string, native string, head int) {
-	base = "/"
+func indexMeta(index []byte) (base string, links []string, meta map[string]string, head int) {
+	base, meta = "/", map[string]string{}
 	z := html.NewTokenizer(bytes.NewReader(index))
 	for off := 0; ; {
 		tt := z.Next()
@@ -358,8 +358,8 @@ func indexMeta(index []byte) (base string, links []string, native string, head i
 				base = h
 			}
 		case "meta":
-			if attr["name"] == "bundle-pilot:native" {
-				native = attr["content"]
+			if key, ok := strings.CutPrefix(attr["name"], "bundle-pilot:"); ok {
+				meta[key] = attr["content"]
 			}
 		case "link":
 			switch attr["rel"] {
@@ -378,5 +378,5 @@ func indexMeta(index []byte) (base string, links []string, native string, head i
 			}
 		}
 	}
-	return base, links[:min(len(links), 12)], native, head
+	return base, links[:min(len(links), 12)], meta, head
 }

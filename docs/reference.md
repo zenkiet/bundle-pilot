@@ -17,6 +17,8 @@ dist/
   config.pb           default bundle, selection rules, backend table (protobuf, see below)
   history/            every saved config, newest 100, secrets masked (see History)
   events.jsonl        the activity feed, newest 500 (see ListEvents)
+  tokens-used.json    when each API token was last used, to the hour
+  setup-token         the first-run token, only while setup runs
   versions/
     4.78.0.zip        one zip per bundle, index.html at the root of the zip
     4.79.0.zip          index.html: <base href> decides the mount path
@@ -180,8 +182,10 @@ blocking stops routing, not content, so delete a bundle that must disappear.
 ### History
 
 Every save that changes what `GetConfig` shows is kept in
-`dist/history/` (the newest 100, mode 0600), with who saved it and the secrets
-masked; the first save also keeps the config from before it. A save that only
+`dist/history/` (the newest 100, mode 0600), with who saved it, its `note`
+and the secrets masked; the first save also keeps the config from before it.
+A note says why, in one line of up to 200 characters sent with
+`UpdateConfig`. A save that only
 changes a password, a token or a block adds nothing. `ListHistory` lists them
 and `GetRevision` returns one; restoring is an `UpdateConfig` with that config,
 which keeps the live admin account, secrets, tokens and blocked bundles.
@@ -228,7 +232,12 @@ API tokens let CI and scripts call the admin API with
 this once, and only its SHA-256 is stored. Scopes: `read` (status, config,
 history, decision tester), `upload` (also adds new versions; replacing one
 takes `admin`), `admin` (everything). `DeleteToken` revokes one at once.
-Tokens wait for an admin password.
+Tokens wait for an admin password. A token created with `expiresAt` is
+refused like an unknown one once that passes (`unauthenticated`, "token ci
+expired"), and `GetStatus` lists `token_expiring` seven days before and
+`token_expired` after, until it is deleted. `ListTokens` shows when each token
+was last used, to the hour, kept in `dist/tokens-used.json` so that using a
+token never rewrites `config.pb`.
 
 Every save, upload, delete, block and token change is logged with who made it
 (`by`: the admin's username, `token:<name>`, `setup`, `cli`, or `anonymous`
@@ -238,9 +247,14 @@ feed with reloads and the bucket sync's fetches and removals (see `ListEvents`).
 A gateway that starts without `config.pb` is in setup: `GetInfo` and
 `GetStatus` report `setupRequired`, reads stay open, and every call that
 changes something needs the `X-Setup-Token` header carrying the token the
-gateway prints to its log at startup. `WhoAmI` answers scope `read` until that
-header carries the right token, then `admin`, so a setup wizard can check the
-token before anything else. Setup ends with the first `UpdateConfig`
+gateway prints to its log at startup. Until setup ends it also keeps that
+token in `dist/setup-token` (mode 0600), so a rotated log does not lose it:
+`gateway setup [--url https://pos.example.com]` prints it with the app's link,
+`bundlepilot://add?url=<url>&setup=<token>`, and on a terminal draws the link
+as a QR for the app to scan. In Docker the binary is `/app/gateway`:
+`docker exec -it <container> /app/gateway setup --url https://pos.example.com`.
+`WhoAmI` answers scope `read` until that header carries the right token, then
+`admin`, so a setup wizard can check the token before anything else. Setup ends with the first `UpdateConfig`
 that sets `auth`; any other save, a block included, is refused until then, so
 setup never leaves the admin API open.
 
@@ -294,7 +308,11 @@ Every poll compares size and modification time with the local files,
 downloads what changed through a temp file and an atomic rename, and deletes
 local zips the bucket no longer has, so the bucket is the source of truth.
 A listing that fails, or lists no zips at all, changes nothing on disk, and
-the bundles already loaded keep serving. Sync failures show up in
+the bundles already loaded keep serving; when it has keys but no zip at the top
+of the prefix, the error names one it skipped, such as `versions/4.80.0.zip`,
+whose folder is the prefix to set. Before saving a source, `CheckSource` lists
+it the same way without writing anything, and names the local zips the first
+sync would delete. Sync failures show up in
 `GetStatus` under `issues` (`source s3://bundles/prod/: operation
 error S3: ListObjectsV2, ... api error AccessDenied: ...`) and in the log when
 the state changes. Editing `"source"`
@@ -346,20 +364,21 @@ curl https://host/__gateway/bundlepilot.gateway.v1.GatewayService/GetStatus \
 
 | Call | Scope | Does |
 |---|---|---|
-| `GetInfo` | none | `{version, setupRequired, passwordSet}`, so an app knows what answers before it signs in. |
+| `GetInfo` | none | `{version, setupRequired, passwordSet, projectName, environment, features}`, so an app knows what answers before it signs in. The labels are empty during setup and readable by whoever reaches `/__gateway/`. `features` names the optional parts this gateway has: `check_source`, `notes`, `issue_events`, `token_expiry`, `release`, `setup_qr`. |
 | `Login` | none | `{username, password}` answers `{token, expiresAt}`, see Admin auth and first run. |
 | `RefreshSession` | login token | A new `{token, expiresAt}` for the login token sent, expired or not, see Admin auth and first run; `unauthenticated` for any other token. |
-| `WhoAmI` | read | `{by, scope, expiresAt}`: who the token belongs to, as `by` names them in logs, its scope, and when a login token ends. During setup, scope `read` until `X-Setup-Token` is right. |
-| `GetStatus` | read | Gateway `version` and `startedAt`, `projectName`, `environment`, `setupRequired` (no `config.pb` yet) and `passwordSet`, default and its source, base path, bundle `source` (`local` or `s3://bucket/prefix/`) with the last `sync` (`at`, `objects`, `error`) for a bucket, `signing` (whether `BUNDLE_PUBKEY` is set), `loadedAt`, reload count and last error, `errors` (a rejected config, refused bundles), memory the process holds from the OS (`residentBytes`; the zips sit in the page cache, which a cgroup limit counts too), bundles with file counts, `zipBytes`, `modTime`, `native`, `blocked` (on the blocked list), `served` (visitors can get it), the zip's `sha256` and `uploadedBy` (who uploaded it, or `s3`, while the feed remembers), decisions counted by `via` (and `refused`) and by bundle since start, `traffic` (decisions per minute over the last hour, oldest first, from `start`: `byBundle` and `byVia`, the latter keyed like the decision counts), load issues. `errors` and `issues` are `{code, text, rule, bundle, reason}`: `code` is stable for apps (`rule_expired`, `bundle_refused`, `no_password`, ...), `text` is for people, and `reason` says why the zip of a `bundle_refused` or `bundle_kept_previous` issue failed to load: `no_index`, `signature`, `damaged`, `too_large`, `too_many_files`, `unsupported` or `bad_native` (its `<meta name="bundle-pilot:native">`); empty for other causes, such as a read error. |
-| `Watch` | read | A stream of `{status, events}`: one message at once, then one within a second of an event or a reload, and about every 10 seconds otherwise. `after` resumes events from the last id the app holds. It ends when the server drains, when the login token expires, and when a new config no longer lets the caller in. |
-| `ListEvents` | read | The activity feed, oldest first: `{id, at, kind, by, bundle, token, revision}` with `kind` `upload`, `delete`, `block`, `unblock`, `config`, `token_create`, `token_delete`, `reload`, `fetch` or `remove` (the bucket sync, `by` `s3`). A `config` event's `revision` is the history id it saved, for `GetRevision`; it is empty when the save changed nothing history keeps, such as only the password. `after` lists those after an id, else the latest; `limit` is 100 by default, 500 at most, all the feed keeps. |
+| `WhoAmI` | read | `{by, scope, expiresAt}`: who the token belongs to, as `by` names them in logs, its scope, and when a login token, or an API token with `expiresAt`, ends. During setup, scope `read` until `X-Setup-Token` is right. |
+| `GetStatus` | read | Gateway `version` and `startedAt`, `projectName`, `environment`, `setupRequired` (no `config.pb` yet) and `passwordSet`, default and its source, base path, bundle `source` (`local` or `s3://bucket/prefix/`) with the last `sync` (`at`, `objects`, `error`) for a bucket, `signing` (whether `BUNDLE_PUBKEY` is set), `loadedAt`, reload count and last error, `errors` (a rejected config, refused bundles), memory the process holds from the OS (`residentBytes`; the zips sit in the page cache, which a cgroup limit counts too), bundles with file counts, `zipBytes`, `modTime`, `native`, `blocked` (on the blocked list), `served` (visitors can get it), the zip's `sha256` and `uploadedBy` (who uploaded it, or `s3`, while the feed remembers), decisions counted by `via` (and `refused`) and by bundle since start, `traffic` (decisions per minute over the last hour, oldest first, from `start`: `byBundle` and `byVia`, the latter keyed like the decision counts), load issues. Each bundle also has its `release` (`commit`, `branch`, `url`, `builtAt`, `builtBy`, `notes`, see Release tags), when its `index.html` has any. `errors` and `issues` are `{code, text, rule, bundle, reason, token}`: `code` is stable for apps (`rule_expired`, `bundle_refused`, `no_password`, ...), `text` is for people, and `reason` says why the zip of a `bundle_refused` or `bundle_kept_previous` issue failed to load: `no_index`, `signature`, `damaged`, `too_large`, `too_many_files`, `unsupported` or `bad_native` (its `<meta name="bundle-pilot:native">`); empty for other causes, such as a read error. `token` names the token of a `token_expiring` or `token_expired` issue. |
+| `Watch` | read | A stream of `{status, events}`: one message at once, then one within a second of an event or a reload, and about every 10 seconds otherwise. `after` resumes events from the last id the app holds. It ends when the server drains, when the token expires, and when a new config no longer lets the caller in. |
+| `ListEvents` | read | The activity feed, oldest first: `{id, at, kind, by, bundle, token, revision, note, code, rule, reason}` with `kind` `upload`, `upload_refused` (a `PUT` answered 422 or 413, with its `reason`), `delete`, `block`, `unblock`, `config`, `token_create`, `token_delete`, `reload`, `fetch` or `remove` (the bucket sync, `by` `s3`), `issue` or `issue_cleared` (an entry of `errors` or `issues` came or went, with its `code`, `bundle`, `rule`, `token` and `reason`; the first load after a start records none). A `config` event's `revision` is the history id it saved, for `GetRevision`; it is empty when the save changed nothing history keeps, such as only the password. Its `note` is the one sent with the save. `after` lists those after an id, else the latest; `limit` is 100 by default, 500 at most, all the feed keeps. |
 | `GetConfig` | read | The stored config and its `etag`; the S3 secret and the password hash come back masked as `***`, and `blocked` and `tokens` are left out. |
 | `CheckConfig` | read | What `UpdateConfig` would answer, without saving: `error` when the config would be rejected, else its `issues`. |
-| `UpdateConfig` | admin | Replace the config, validated against the loaded bundles: `invalid_argument` when rejected, else the new `etag` and `issues` (warnings); the gateway reloads before answering (a reload that fails then shows in `lastError` and is retried). A masked secret or password hash keeps the stored one; `auth.password` is hashed before the file is written. Send the `etag` of the config you edited: a save over a config that changed since answers `aborted` (without one the save goes through). |
+| `CheckSource` | admin | `{source}` answers `{error, zips, versions, wouldRemove, ignored}`: the bucket listing a sync of that source would make, within 10 seconds, without saving or writing anything. `zips` counts the zips at the top of the prefix and `versions` names the newest 20; `wouldRemove` is the local zips the first sync would delete, none when the bucket lists no zips; `ignored` is up to 20 keys the sync skips (in a folder, hidden, or not a `.zip`). A masked secret means the stored one. An invalid source is `invalid_argument`; the store's error comes back in `error`. A `local` source lists `versions/`. |
+| `UpdateConfig` | admin | Replace the config, validated against the loaded bundles: `invalid_argument` when rejected, else the new `etag` and `issues` (warnings); the gateway reloads before answering (a reload that fails then shows in `lastError` and is retried). A masked secret or password hash keeps the stored one; `auth.password` is hashed before the file is written. Send the `etag` of the config you edited: a save over a config that changed since answers `aborted` (without one the save goes through). A `note`, one line of up to 200 characters, is kept with the revision and the `config` event. |
 | `Decide` | read | The decision tester: `{facts, config}` answers `{bundle, via, why, match, error}` as `/data` would under that config (the live one when `config` is left out). `why` has one `{rule, reason, fact, value, bucket, percent}` per earlier rule: `reason` is `inactive`, `expired`, `no_fact`, `no_match` or `needs_native`, and a percentage condition adds the value's `bucket` (0-99), which matches below `percent`. When a rule decided, `match` has one `{fact, value, bucket, percent}` per condition of it, the bucket again for a percentage (a value the condition lists matches whatever its bucket). No cookie, no counters. |
-| `ListHistory`, `GetRevision` | read | The saved configs, newest first, as `{id, at, by}`, the newest `limit` only when set, each with its `config` when `configs` is set; one of them, as `GetConfig` returns a config. |
+| `ListHistory`, `GetRevision` | read | The saved configs, newest first, as `{id, at, by, note}`, the newest `limit` only when set, each with its `config` when `configs` is set; one of them, as `GetConfig` returns a config. |
 | `SetBlocked` | admin | Block a loaded bundle, or lift the block: `not_found` when not loaded, `failed_precondition` for the default. See Blocking a bundle. |
-| `ListTokens`, `CreateToken`, `DeleteToken` | admin | List API tokens (name, scope, created), create one (its `token`, shown once; `failed_precondition` until an admin password is set) or revoke one. |
+| `ListTokens`, `CreateToken`, `DeleteToken` | admin | List API tokens (`name`, `scope`, `created`, `expiresAt`, and `lastUsed` to the hour), create one (its `token`, shown once; `failed_precondition` until an admin password is set; an optional `expiresAt`, which must be ahead) or revoke one. |
 | `Reload` | admin | Reload config and bundles now instead of at the watcher's next tick; answers `reloadMs`, or `internal` when the previous snapshot was kept. |
 
 Errors are Connect errors, `{"code": "...", "message": "..."}`, with the HTTP
@@ -498,10 +517,35 @@ are unaffected. Runtime config files such as
 `environments/env.js` are served from the selected bundle; keep one copy per
 version, since a bundle without one gets another bundle's copy.
 
+### Release tags
+
+A build can say what it is in its `index.html`, and `GetStatus` shows it as
+the bundle's `release`, so the admin app can name the commit behind a version:
+
+```html
+<meta name="bundle-pilot:commit" content="9f8b2c1">
+<meta name="bundle-pilot:branch" content="main">
+<meta name="bundle-pilot:url" content="https://git.example.com/pos/commit/9f8b2c1">
+<meta name="bundle-pilot:built-at" content="2026-11-16T09:12:00Z">
+<meta name="bundle-pilot:built-by" content="ci">
+<meta name="bundle-pilot:notes" content="Fix totals at checkout">
+```
+
+Every tag is optional. Each value is one line of up to 1000 characters, `url`
+must be http or https and `built-at` RFC 3339; a tag that fails is left out,
+and the bundle still serves. `index.html` is public: write no secrets, and name
+a CI job in `built-by`, not a person. The signature covers `index.html`, so the
+tags cannot change after signing. Write them in CI before the brotli step and
+the zip, for example with GNU sed:
+
+```sh
+sed -i "s|</head>|<meta name=\"bundle-pilot:commit\" content=\"$GIT_COMMIT\"><meta name=\"bundle-pilot:built-at\" content=\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"></head>|" build/browser/index.html
+```
+
 ## Structure
 
 ```
-cmd/gateway                    wiring: env -> bundlefs -> usecase -> handler -> http.Server; check, import
+cmd/gateway                    wiring: env -> bundlefs -> usecase -> handler -> http.Server; check, import, setup
 proto/                         the config and admin API contracts (buf.yaml, buf.gen.yaml at the root)
 internal/gen                   Go generated from proto/ (configv1, gatewayv1 with its Connect handler), committed
 internal/env                   environment variables: PORT, DIST, LOG_LEVEL, BUNDLE_PUBKEY, CORS_ORIGINS

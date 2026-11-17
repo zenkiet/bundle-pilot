@@ -31,6 +31,8 @@ service GatewayService {
   rpc GetConfig(GetConfigRequest) returns (GetConfigResponse);
   // Validates without saving. Scope read.
   rpc CheckConfig(CheckConfigRequest) returns (CheckConfigResponse);
+  // Lists a source as the sync would, writing nothing. Scope admin.
+  rpc CheckSource(CheckSourceRequest) returns (CheckSourceResponse);
   // Saves and reloads. Scope admin.
   rpc UpdateConfig(UpdateConfigRequest) returns (UpdateConfigResponse);
   // Answers like POST /__gateway/data, under the saved config or a draft. Scope read.
@@ -58,6 +60,11 @@ message GetInfoResponse {
   // Set while there is no config.pb yet.
   bool setup_required = 2;
   bool password_set = 3;
+  // Empty during setup.
+  string project_name = 4;
+  string environment = 5;
+  // Optional API parts it has: check_source, notes, issue_events, token_expiry, release, setup_qr.
+  repeated string features = 6;
 }
 
 message LoginRequest {
@@ -85,7 +92,7 @@ message WhoAmIResponse {
   string by = 1;
   // read, upload or admin; read during setup until X-Setup-Token is right.
   string scope = 2;
-  // Login tokens only.
+  // Login tokens, and API tokens that expire.
   google.protobuf.Timestamp expires_at = 3;
 }
 
@@ -135,6 +142,8 @@ message Issue {
   // Why a bundle_refused or bundle_kept_previous zip failed: no_index, signature, damaged,
   // too_large, too_many_files, unsupported or bad_native; empty for other causes.
   string reason = 5;
+  // For token_expiring and token_expired.
+  string token = 6;
 }
 
 message Traffic {
@@ -171,6 +180,19 @@ message Bundle {
   string sha256 = 8;
   // As WhoAmI names them, or "s3"; empty once older than the events kept.
   string uploaded_by = 9;
+  // From index.html's bundle-pilot:* meta tags; unset when it has none.
+  Release release = 10;
+}
+
+// Each value is one line of at most 1000 characters; a tag that fails its check is left out.
+message Release {
+  string commit = 1;
+  string branch = 2;
+  // http or https.
+  string url = 3;
+  google.protobuf.Timestamp built_at = 4;
+  string built_by = 5;
+  string notes = 6;
 }
 
 message GetConfigRequest {}
@@ -195,11 +217,31 @@ message UpdateConfigRequest {
   bundlepilot.config.v1.Config config = 1;
   // From GetConfig: a config changed since is refused with ABORTED.
   string etag = 2;
+  // One line, at most 200 characters; kept with the revision.
+  string note = 3;
 }
 
 message UpdateConfigResponse {
   string etag = 1;
   repeated Issue issues = 2;
+}
+
+message CheckSourceRequest {
+  // A masked secret means the stored one.
+  bundlepilot.config.v1.Source source = 1;
+}
+
+message CheckSourceResponse {
+  // The store's error; empty when the listing worked.
+  string error = 1;
+  // The zips the sync mirrors: .zip keys at the top of the prefix.
+  int64 zips = 2;
+  // Their versions, newest first, at most 20.
+  repeated string versions = 3;
+  // Local zips the bucket lacks, which the first sync deletes; empty when it lists no zips.
+  repeated string would_remove = 4;
+  // Keys the sync skips, at most 20: in a folder, hidden or not a .zip.
+  repeated string ignored = 5;
 }
 
 message DecideRequest {
@@ -258,6 +300,7 @@ message Revision {
   string by = 3;
   // With ListHistory configs; secrets masked.
   bundlepilot.config.v1.Config config = 4;
+  string note = 5;
 }
 
 message GetRevisionRequest {
@@ -286,12 +329,18 @@ message Token {
   // read, upload or admin.
   string scope = 2;
   google.protobuf.Timestamp created = 3;
+  // To the hour; unset when never used.
+  google.protobuf.Timestamp last_used = 4;
+  // Unset: never.
+  google.protobuf.Timestamp expires_at = 5;
 }
 
 message CreateTokenRequest {
   string name = 1;
   // read, upload or admin.
   string scope = 2;
+  // Unset: never.
+  google.protobuf.Timestamp expires_at = 3;
 }
 
 message CreateTokenResponse {
@@ -338,13 +387,19 @@ message Event {
   // Grows with every event, for after.
   int64 id = 1;
   google.protobuf.Timestamp at = 2;
-  // upload, delete, block, unblock, config, token_create, token_delete, reload, fetch or remove
-  // (the bucket sync).
+  // upload, upload_refused, delete, block, unblock, config, token_create, token_delete, reload,
+  // fetch or remove (the bucket sync), issue or issue_cleared (an Issue came or went).
   string kind = 3;
-  // As WhoAmI names them, or "s3".
+  // As WhoAmI names them, or "s3"; empty for issue events.
   string by = 4;
   string bundle = 5;
   string token = 6;
   // For config events: the history id saved, empty when nothing history keeps changed.
   string revision = 7;
+  // For config events.
+  string note = 8;
+  // For issue events, as in Issue; reason also for upload_refused.
+  string code = 9;
+  string rule = 10;
+  string reason = 11;
 }

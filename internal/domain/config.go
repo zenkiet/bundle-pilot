@@ -42,10 +42,15 @@ type Config struct {
 	Tokens      []Token
 }
 
+func (c Config) NewestFirst(a, b string) int {
+	return cmp.Or(c.Dates.Compare(b, a), strings.Compare(b, a))
+}
+
 type Revision struct {
 	ID     string
 	At     time.Time
 	By     string
+	Note   string
 	Config *configv1.Config // secrets masked
 }
 

@@ -40,7 +40,7 @@ func (rt *Router) Watch(ctx context.Context, req *connect.Request[gatewayv1.Watc
 	defer tick.Stop()
 	for {
 		if !c.exp.IsZero() && !time.Now().Before(c.exp) {
-			return connect.NewError(connect.CodeUnauthenticated, errors.New("login expired: refresh it and watch again"))
+			return connect.NewError(connect.CodeUnauthenticated, errors.New("token expired: refresh the login, or use another token, and watch again"))
 		}
 		snap := rt.cat.Current()
 		if seen != nil && snap != seen {
@@ -81,5 +81,9 @@ func event(e domain.Event) *gatewayv1.Event {
 		Bundle:   e.Bundle,
 		Token:    e.Token,
 		Revision: e.Revision,
+		Note:     e.Note,
+		Code:     e.Code,
+		Rule:     e.Rule,
+		Reason:   e.Reason,
 	}
 }

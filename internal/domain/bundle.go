@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"cmp"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/zenkiet/bundle-pilot/internal/pkg/asset"
 	"github.com/zenkiet/bundle-pilot/internal/pkg/version"
@@ -45,7 +46,8 @@ type Bundle struct {
 	ModTime  time.Time
 	Link     []string // Link header values without the leading "<", url as index.html has it
 	Native   string   // the native app versions it runs on, such as ">=4.102.0"
-	SHA256   string   // of the zip, hex
+	Release  Release
+	SHA256   string // of the zip, hex
 	base     string
 	tag      []string
 	files    map[string]*asset.Asset
@@ -54,10 +56,12 @@ type Bundle struct {
 }
 
 // NewBundle builds a bundle. index is the stamped page; files keeps the raw one for OTA downloads.
-func NewBundle(ver, baseHref, native string, files map[string]*asset.Asset, index *asset.Asset) (*Bundle, error) {
+// meta holds index.html's bundle-pilot:* tags, keyed without the prefix.
+func NewBundle(ver, baseHref string, meta map[string]string, files map[string]*asset.Asset, index *asset.Asset) (*Bundle, error) {
 	b := &Bundle{
 		Version: ver,
-		Native:  strings.TrimSpace(native),
+		Native:  strings.TrimSpace(meta["native"]),
+		Release: parseRelease(meta),
 		base:    normalizeBase(baseHref),
 		tag:     []string{ver},
 		files:   files,
@@ -72,6 +76,33 @@ func NewBundle(ver, baseHref, native string, files map[string]*asset.Asset, inde
 		b.native = bounds
 	}
 	return b, nil
+}
+
+// Release is checked value by value: uploaders need not be admins, and the admin app shows it.
+type Release struct {
+	Commit  string
+	Branch  string
+	URL     string
+	BuiltAt time.Time
+	BuiltBy string
+	Notes   string
+}
+
+func parseRelease(meta map[string]string) Release {
+	line := func(name string) string {
+		v := strings.TrimSpace(meta[name])
+		if utf8.RuneCountInString(v) > 1000 || strings.ContainsFunc(v, unicode.IsControl) {
+			return ""
+		}
+		return v
+	}
+	r := Release{Commit: line("commit"), Branch: line("branch"), BuiltBy: line("built-by"), Notes: line("notes")}
+	u, err := url.Parse(line("url"))
+	if err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" {
+		r.URL = u.String()
+	}
+	r.BuiltAt, _ = time.Parse(time.RFC3339, line("built-at")) // zero unless RFC 3339
+	return r
 }
 
 func (b *Bundle) runs(native string) bool {
@@ -97,6 +128,7 @@ type Issue struct {
 	Rule   string
 	Bundle string
 	Reason string
+	Token  string
 }
 
 // Inventory is what a Source loaded. Retry means a failure may clear by itself.
@@ -146,9 +178,7 @@ func NewSnapshot(inv Inventory, now time.Time, prevDefault string) *Snapshot {
 		fallback: map[string]owned{},
 	}
 	s.Config.Rules = slices.Clone(inv.Config.Rules)
-	slices.SortFunc(s.order, func(a, b *Bundle) int {
-		return cmp.Or(inv.Config.Dates.Compare(b.Version, a.Version), strings.Compare(b.Version, a.Version))
-	})
+	slices.SortFunc(s.order, func(a, b *Bundle) int { return inv.Config.NewestFirst(a.Version, b.Version) })
 	for _, b := range s.order {
 		if !slices.Contains(s.Config.Blocked, b.Version) {
 			s.bundles[b.Version] = b
@@ -183,6 +213,7 @@ func NewSnapshot(inv Inventory, now time.Time, prevDefault string) *Snapshot {
 			Text: "no admin password: anyone who reaches /__gateway/ can change the config",
 		})
 	}
+	s.Issues = append(s.Issues, tokenIssues(s.Config.Tokens, now)...)
 	keys := map[string]string{}
 	for i := range s.Config.Rules {
 		r := &s.Config.Rules[i]

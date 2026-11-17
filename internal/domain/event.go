@@ -11,4 +11,8 @@ type Event struct {
 	Bundle   string    `json:"bundle,omitempty"`
 	Token    string    `json:"token,omitempty"`
 	Revision string    `json:"revision,omitempty"`
+	Note     string    `json:"note,omitempty"`
+	Code     string    `json:"code,omitempty"`
+	Rule     string    `json:"rule,omitempty"`
+	Reason   string    `json:"reason,omitempty"`
 }

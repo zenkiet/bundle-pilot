@@ -107,15 +107,15 @@ func (m *Mirror) sync(ctx context.Context) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	want := map[string]Object{}
-	for _, o := range objs {
-		inFolder := strings.ContainsAny(o.Key, `/\`)
-		if strings.HasSuffix(o.Key, ".zip") && !inFolder && !strings.HasPrefix(o.Key, ".") {
-			want[o.Key] = o
-		}
-	}
+	want, skipped := Split(objs)
 	if len(want) == 0 {
-		return 0, errors.New("lists no zips, keeping the local files")
+		msg := "lists no zips, keeping the local files"
+		if len(skipped) > 0 { // usually zips in a folder, which the prefix fixes
+			isZip := func(k string) bool { return strings.HasSuffix(k, ".zip") }
+			example := skipped[max(0, slices.IndexFunc(skipped, isZip))] // a zip if any
+			msg += "; skipped keys include " + example + ": zips go at the top of the prefix"
+		}
+		return 0, errors.New(msg)
 	}
 	var errs []error
 	for _, name := range slices.Sorted(maps.Keys(want)) {
@@ -143,6 +143,20 @@ func (m *Mirror) sync(ctx context.Context) (int, error) {
 		}
 	}
 	return len(want), errors.Join(errs...)
+}
+
+// Split parts a listing into the zips a sync mirrors and the keys it skips.
+func Split(objs []Object) (zips map[string]Object, skipped []string) {
+	zips = map[string]Object{}
+	for _, o := range objs {
+		inFolder := strings.ContainsAny(o.Key, `/\`)
+		if strings.HasSuffix(o.Key, ".zip") && !inFolder && !strings.HasPrefix(o.Key, ".") {
+			zips[o.Key] = o
+		} else {
+			skipped = append(skipped, o.Key)
+		}
+	}
+	return zips, skipped
 }
 
 func (m *Mirror) fetch(ctx context.Context, root *os.Root, o Object) error {

@@ -56,6 +56,9 @@ const (
 	// GatewayServiceCheckConfigProcedure is the fully-qualified name of the GatewayService's
 	// CheckConfig RPC.
 	GatewayServiceCheckConfigProcedure = "/bundlepilot.gateway.v1.GatewayService/CheckConfig"
+	// GatewayServiceCheckSourceProcedure is the fully-qualified name of the GatewayService's
+	// CheckSource RPC.
+	GatewayServiceCheckSourceProcedure = "/bundlepilot.gateway.v1.GatewayService/CheckSource"
 	// GatewayServiceUpdateConfigProcedure is the fully-qualified name of the GatewayService's
 	// UpdateConfig RPC.
 	GatewayServiceUpdateConfigProcedure = "/bundlepilot.gateway.v1.GatewayService/UpdateConfig"
@@ -104,6 +107,8 @@ type GatewayServiceClient interface {
 	GetConfig(context.Context, *connect.Request[gatewayv1.GetConfigRequest]) (*connect.Response[gatewayv1.GetConfigResponse], error)
 	// Validates without saving. Scope read.
 	CheckConfig(context.Context, *connect.Request[gatewayv1.CheckConfigRequest]) (*connect.Response[gatewayv1.CheckConfigResponse], error)
+	// Lists a source as the sync would, writing nothing. Scope admin.
+	CheckSource(context.Context, *connect.Request[gatewayv1.CheckSourceRequest]) (*connect.Response[gatewayv1.CheckSourceResponse], error)
 	// Saves and reloads. Scope admin.
 	UpdateConfig(context.Context, *connect.Request[gatewayv1.UpdateConfigRequest]) (*connect.Response[gatewayv1.UpdateConfigResponse], error)
 	// Answers like POST /__gateway/data, under the saved config or a draft. Scope read.
@@ -189,6 +194,12 @@ func NewGatewayServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(gatewayServiceMethods.ByName("CheckConfig")),
 			connect.WithClientOptions(opts...),
 		),
+		checkSource: connect.NewClient[gatewayv1.CheckSourceRequest, gatewayv1.CheckSourceResponse](
+			httpClient,
+			baseURL+GatewayServiceCheckSourceProcedure,
+			connect.WithSchema(gatewayServiceMethods.ByName("CheckSource")),
+			connect.WithClientOptions(opts...),
+		),
 		updateConfig: connect.NewClient[gatewayv1.UpdateConfigRequest, gatewayv1.UpdateConfigResponse](
 			httpClient,
 			baseURL+GatewayServiceUpdateConfigProcedure,
@@ -257,6 +268,7 @@ type gatewayServiceClient struct {
 	listEvents     *connect.Client[gatewayv1.ListEventsRequest, gatewayv1.ListEventsResponse]
 	getConfig      *connect.Client[gatewayv1.GetConfigRequest, gatewayv1.GetConfigResponse]
 	checkConfig    *connect.Client[gatewayv1.CheckConfigRequest, gatewayv1.CheckConfigResponse]
+	checkSource    *connect.Client[gatewayv1.CheckSourceRequest, gatewayv1.CheckSourceResponse]
 	updateConfig   *connect.Client[gatewayv1.UpdateConfigRequest, gatewayv1.UpdateConfigResponse]
 	decide         *connect.Client[gatewayv1.DecideRequest, gatewayv1.DecideResponse]
 	listHistory    *connect.Client[gatewayv1.ListHistoryRequest, gatewayv1.ListHistoryResponse]
@@ -311,6 +323,11 @@ func (c *gatewayServiceClient) GetConfig(ctx context.Context, req *connect.Reque
 // CheckConfig calls bundlepilot.gateway.v1.GatewayService.CheckConfig.
 func (c *gatewayServiceClient) CheckConfig(ctx context.Context, req *connect.Request[gatewayv1.CheckConfigRequest]) (*connect.Response[gatewayv1.CheckConfigResponse], error) {
 	return c.checkConfig.CallUnary(ctx, req)
+}
+
+// CheckSource calls bundlepilot.gateway.v1.GatewayService.CheckSource.
+func (c *gatewayServiceClient) CheckSource(ctx context.Context, req *connect.Request[gatewayv1.CheckSourceRequest]) (*connect.Response[gatewayv1.CheckSourceResponse], error) {
+	return c.checkSource.CallUnary(ctx, req)
 }
 
 // UpdateConfig calls bundlepilot.gateway.v1.GatewayService.UpdateConfig.
@@ -379,6 +396,8 @@ type GatewayServiceHandler interface {
 	GetConfig(context.Context, *connect.Request[gatewayv1.GetConfigRequest]) (*connect.Response[gatewayv1.GetConfigResponse], error)
 	// Validates without saving. Scope read.
 	CheckConfig(context.Context, *connect.Request[gatewayv1.CheckConfigRequest]) (*connect.Response[gatewayv1.CheckConfigResponse], error)
+	// Lists a source as the sync would, writing nothing. Scope admin.
+	CheckSource(context.Context, *connect.Request[gatewayv1.CheckSourceRequest]) (*connect.Response[gatewayv1.CheckSourceResponse], error)
 	// Saves and reloads. Scope admin.
 	UpdateConfig(context.Context, *connect.Request[gatewayv1.UpdateConfigRequest]) (*connect.Response[gatewayv1.UpdateConfigResponse], error)
 	// Answers like POST /__gateway/data, under the saved config or a draft. Scope read.
@@ -460,6 +479,12 @@ func NewGatewayServiceHandler(svc GatewayServiceHandler, opts ...connect.Handler
 		connect.WithSchema(gatewayServiceMethods.ByName("CheckConfig")),
 		connect.WithHandlerOptions(opts...),
 	)
+	gatewayServiceCheckSourceHandler := connect.NewUnaryHandler(
+		GatewayServiceCheckSourceProcedure,
+		svc.CheckSource,
+		connect.WithSchema(gatewayServiceMethods.ByName("CheckSource")),
+		connect.WithHandlerOptions(opts...),
+	)
 	gatewayServiceUpdateConfigHandler := connect.NewUnaryHandler(
 		GatewayServiceUpdateConfigProcedure,
 		svc.UpdateConfig,
@@ -534,6 +559,8 @@ func NewGatewayServiceHandler(svc GatewayServiceHandler, opts ...connect.Handler
 			gatewayServiceGetConfigHandler.ServeHTTP(w, r)
 		case GatewayServiceCheckConfigProcedure:
 			gatewayServiceCheckConfigHandler.ServeHTTP(w, r)
+		case GatewayServiceCheckSourceProcedure:
+			gatewayServiceCheckSourceHandler.ServeHTTP(w, r)
 		case GatewayServiceUpdateConfigProcedure:
 			gatewayServiceUpdateConfigHandler.ServeHTTP(w, r)
 		case GatewayServiceDecideProcedure:
@@ -595,6 +622,10 @@ func (UnimplementedGatewayServiceHandler) GetConfig(context.Context, *connect.Re
 
 func (UnimplementedGatewayServiceHandler) CheckConfig(context.Context, *connect.Request[gatewayv1.CheckConfigRequest]) (*connect.Response[gatewayv1.CheckConfigResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("bundlepilot.gateway.v1.GatewayService.CheckConfig is not implemented"))
+}
+
+func (UnimplementedGatewayServiceHandler) CheckSource(context.Context, *connect.Request[gatewayv1.CheckSourceRequest]) (*connect.Response[gatewayv1.CheckSourceResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("bundlepilot.gateway.v1.GatewayService.CheckSource is not implemented"))
 }
 
 func (UnimplementedGatewayServiceHandler) UpdateConfig(context.Context, *connect.Request[gatewayv1.UpdateConfigRequest]) (*connect.Response[gatewayv1.UpdateConfigResponse], error) {

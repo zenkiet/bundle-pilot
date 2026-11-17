@@ -14,11 +14,40 @@ import (
 
 var scopes = []string{"read", "upload", "admin"} // weakest first
 
+const expiryWarning = 7 * 24 * time.Hour
+
 type Token struct {
 	Name    string
 	Scope   string
 	Created time.Time
+	Expires time.Time // zero: never
 	hash    [sha256.Size]byte
+}
+
+func (t Token) Expired(now time.Time) bool {
+	return !t.Expires.IsZero() && !now.Before(t.Expires)
+}
+
+func tokenIssues(tokens []Token, now time.Time) []Issue {
+	var out []Issue
+	for _, t := range tokens {
+		switch {
+		case t.Expires.IsZero():
+		case t.Expired(now):
+			out = append(out, Issue{
+				Code:  "token_expired",
+				Text:  fmt.Sprintf("token %s expired on %s: delete it", t.Name, t.Expires.Format(time.DateOnly)),
+				Token: t.Name,
+			})
+		case now.Add(expiryWarning).After(t.Expires):
+			out = append(out, Issue{
+				Code:  "token_expiring",
+				Text:  fmt.Sprintf("token %s expires on %s", t.Name, t.Expires.Format(time.DateOnly)),
+				Token: t.Name,
+			})
+		}
+	}
+	return out
 }
 
 func NewToken() (secret, hash string) {
@@ -56,7 +85,14 @@ func parseTokens(ts []*configv1.Token) ([]Token, error) {
 			return nil, fmt.Errorf("token %s: sha256 must be 64 hex digits", t.Name)
 		}
 		created, _ := time.Parse(time.RFC3339, t.Created)
-		out = append(out, Token{Name: t.Name, Scope: t.Scope, Created: created, hash: [sha256.Size]byte(sum)})
+		token := Token{Name: t.Name, Scope: t.Scope, Created: created, hash: [sha256.Size]byte(sum)}
+		if t.Expires != "" {
+			token.Expires, err = time.Parse(time.RFC3339, t.Expires)
+			if err != nil { // ignoring a typo would make the token last forever
+				return nil, fmt.Errorf("token %s: expires %q is not an RFC 3339 time", t.Name, t.Expires)
+			}
+		}
+		out = append(out, token)
 	}
 	return out, nil
 }

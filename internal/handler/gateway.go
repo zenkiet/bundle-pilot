@@ -109,12 +109,18 @@ func init() {
 	}
 }
 
+// features lets an app hide what an older gateway lacks.
+var features = []string{"check_source", "notes", "issue_events", "token_expiry", "release", "setup_qr"}
+
 func (rt *Router) GetInfo(context.Context, *connect.Request[gatewayv1.GetInfoRequest]) (*connect.Response[gatewayv1.GetInfoResponse], error) {
 	snap := rt.cat.Current()
 	return connect.NewResponse(&gatewayv1.GetInfoResponse{
 		Version:       build,
 		SetupRequired: snap.Setup != "",
 		PasswordSet:   snap.Config.Auth.Hash != "",
+		ProjectName:   snap.Config.Project,
+		Environment:   snap.Config.Environment,
+		Features:      features,
 	}), nil
 }
 
@@ -166,7 +172,19 @@ func (rt *Router) status() *gatewayv1.GetStatusResponse {
 			Served:     snap.Bundle(b.Version) != nil,
 			Sha256:     b.SHA256,
 			UploadedBy: uploaders[b.Version],
+			Release:    release(b.Release),
 		})
+	}
+	return out
+}
+
+func release(r domain.Release) *gatewayv1.Release {
+	if r == (domain.Release{}) {
+		return nil
+	}
+	out := &gatewayv1.Release{Commit: r.Commit, Branch: r.Branch, Url: r.URL, BuiltBy: r.BuiltBy, Notes: r.Notes}
+	if !r.BuiltAt.IsZero() {
+		out.BuiltAt = timestamppb.New(r.BuiltAt)
 	}
 	return out
 }
@@ -185,7 +203,7 @@ func (rt *Router) uploaders() map[string]string {
 func issues(in []domain.Issue) []*gatewayv1.Issue {
 	out := make([]*gatewayv1.Issue, 0, len(in))
 	for _, i := range in {
-		out = append(out, &gatewayv1.Issue{Code: i.Code, Text: i.Text, Rule: i.Rule, Bundle: i.Bundle, Reason: i.Reason})
+		out = append(out, &gatewayv1.Issue{Code: i.Code, Text: i.Text, Rule: i.Rule, Bundle: i.Bundle, Reason: i.Reason, Token: i.Token})
 	}
 	return out
 }

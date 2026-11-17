@@ -25,7 +25,7 @@ import (
 type caller struct {
 	who, scope string
 	ip         netip.Addr
-	exp        time.Time // login tokens only
+	exp        time.Time // zero: never expires
 }
 
 type callerKey struct{}
@@ -89,15 +89,19 @@ func (rt *Router) authorize(h http.Header, ip netip.Addr, need string) (caller, 
 		return caller{who: a.Username, scope: "admin", ip: ip, exp: exp}, nil
 	}
 	t, found := snap.Config.Token(secret)
+	now := time.Now()
 	switch {
 	case !found:
 		rt.log.Warn("unknown token", "remote", ip)
 		return caller{}, connect.NewError(connect.CodeUnauthenticated, errors.New("unknown token"))
+	case t.Expired(now):
+		return caller{}, connect.NewError(connect.CodeUnauthenticated, fmt.Errorf("token %s expired", t.Name))
 	case !domain.Allows(t.Scope, need):
 		return caller{}, connect.NewError(connect.CodePermissionDenied,
 			fmt.Errorf("token %s has scope %s, this needs %s", t.Name, t.Scope, need))
 	}
-	return caller{who: "token:" + t.Name, scope: t.Scope, ip: ip}, nil
+	rt.cat.TokenUsed(t.Name, now)
+	return caller{who: "token:" + t.Name, scope: t.Scope, ip: ip, exp: t.Expires}, nil
 }
 
 type authInterceptor struct{ rt *Router }

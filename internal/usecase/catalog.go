@@ -23,14 +23,17 @@ type Source interface {
 	Stamp() uint64
 	Load() (domain.Inventory, error)
 	ReadConfig() (*configv1.Config, error)
-	WriteConfig(pb *configv1.Config, by string) (revision string, err error)
+	WriteConfig(pb *configv1.Config, by, note string) (revision string, err error)
 	History() ([]domain.Revision, error)
 	Revision(id string) (*configv1.Config, error)
 	PutBundle(ctx context.Context, name string, r io.Reader) (files int, replaced bool, err error)
 	DeleteBundle(ctx context.Context, name string) error
 	SyncState() (at time.Time, objects int, lastErr string)
+	CheckSource(ctx context.Context, src domain.Source) (zips, ignored, wouldRemove []string, err error)
 	Record(e domain.Event)
 	Events(after int64, limit int) []domain.Event
+	TokenUsed(name string, now time.Time)
+	TokensUsed() map[string]time.Time
 }
 
 var errFirstAdmin = errors.New("finish setup first: save a config that sets the admin username and password")
@@ -73,7 +76,7 @@ func (c *Catalog) Config() (*configv1.Config, error) {
 // UpdateConfig runs one at a time, so read-modify-writes cannot lose each other, and never
 // overwrites an unreadable config.pb, which holds the admin account. It returns the revision id,
 // "" when the save made none.
-func (c *Catalog) UpdateConfig(by string, edit func(cur *configv1.Config) (*configv1.Config, error)) (string, error) {
+func (c *Catalog) UpdateConfig(by, note string, edit func(cur *configv1.Config) (*configv1.Config, error)) (string, error) {
 	c.writing.Lock()
 	defer c.writing.Unlock()
 	cur, err := c.src.ReadConfig()
@@ -99,7 +102,7 @@ func (c *Catalog) UpdateConfig(by string, edit func(cur *configv1.Config) (*conf
 		return "", errFirstAdmin
 	}
 	domain.HashAuth(next)
-	rev, err := c.src.WriteConfig(next, by)
+	rev, err := c.src.WriteConfig(next, by, note)
 	if err != nil {
 		return "", err
 	}
@@ -130,6 +133,14 @@ func (c *Catalog) DeleteBundle(ctx context.Context, name string) error {
 }
 
 func (c *Catalog) SyncState() (at time.Time, objects int, lastErr string) { return c.src.SyncState() }
+
+func (c *Catalog) CheckSource(ctx context.Context, src domain.Source) (zips, ignored, wouldRemove []string, err error) {
+	return c.src.CheckSource(ctx, src)
+}
+
+func (c *Catalog) TokenUsed(name string, now time.Time) { c.src.TokenUsed(name, now) }
+
+func (c *Catalog) TokensUsed() map[string]time.Time { return c.src.TokensUsed() }
 
 func (c *Catalog) Record(e domain.Event) { c.src.Record(e) }
 
@@ -166,6 +177,10 @@ func (c *Catalog) reload() error {
 	}
 	snap := domain.NewSnapshot(inv, time.Now(), prevDefault)
 	c.cur.Store(snap)
+	if prev != nil { // the first load only learns them, so a restart repeats none
+		c.recordMissing("issue", snap, prev)
+		c.recordMissing("issue_cleared", prev, snap)
+	}
 	for _, e := range snap.Errors {
 		c.log.Error(e.Text, "code", e.Code)
 	}
@@ -188,6 +203,24 @@ func (c *Catalog) reload() error {
 		debug.FreeOSMemory() // checking zips leaves tens of MiB of decoder garbage behind
 	}
 	return nil
+}
+
+// recordMissing matches issues on what they are about, not on their text, which may change.
+func (c *Catalog) recordMissing(kind string, from, other *domain.Snapshot) {
+	key := func(i domain.Issue) domain.Issue {
+		return domain.Issue{Code: i.Code, Rule: i.Rule, Bundle: i.Bundle, Token: i.Token}
+	}
+	seen := map[domain.Issue]bool{}
+	for _, i := range slices.Concat(other.Errors, other.Issues) {
+		seen[key(i)] = true
+	}
+	for _, i := range slices.Concat(from.Errors, from.Issues) {
+		if seen[key(i)] {
+			continue
+		}
+		seen[key(i)] = true // once per key
+		c.src.Record(domain.Event{Kind: kind, Code: i.Code, Rule: i.Rule, Bundle: i.Bundle, Token: i.Token, Reason: i.Reason})
+	}
 }
 
 // Watch retries a failure that may clear by itself, backing off up to a minute.

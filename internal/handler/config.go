@@ -3,7 +3,11 @@ package handler
 import (
 	"context"
 	"errors"
+	"slices"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -40,12 +44,15 @@ func (rt *Router) CheckConfig(_ context.Context, req *connect.Request[gatewayv1.
 }
 
 func (rt *Router) UpdateConfig(ctx context.Context, req *connect.Request[gatewayv1.UpdateConfigRequest]) (*connect.Response[gatewayv1.UpdateConfigResponse], error) {
-	pb, etag := req.Msg.Config, req.Msg.Etag
+	pb, etag, note := req.Msg.Config, req.Msg.Etag, strings.TrimSpace(req.Msg.Note)
 	if pb == nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errNoConfig)
 	}
+	if utf8.RuneCountInString(note) > 200 || strings.ContainsFunc(note, unicode.IsControl) {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("note: one line of at most 200 characters"))
+	}
 	c := from(ctx)
-	rev, err := rt.cat.UpdateConfig(c.who, func(cur *configv1.Config) (*configv1.Config, error) {
+	rev, err := rt.cat.UpdateConfig(c.who, note, func(cur *configv1.Config) (*configv1.Config, error) {
 		if etag != "" && etag != domain.ETag(cur) {
 			return nil, errStale
 		}
@@ -59,8 +66,35 @@ func (rt *Router) UpdateConfig(ctx context.Context, req *connect.Request[gateway
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	rt.log.Info("config saved", "by", c.who, "remote", c.ip)
-	rt.cat.Record(domain.Event{Kind: "config", By: c.who, Revision: rev})
+	rt.cat.Record(domain.Event{Kind: "config", By: c.who, Revision: rev, Note: note})
 	return connect.NewResponse(&gatewayv1.UpdateConfigResponse{Etag: domain.ETag(pb), Issues: issues(rt.cat.Current().Issues)}), nil
+}
+
+const maxListed = 20
+
+func (rt *Router) CheckSource(ctx context.Context, req *connect.Request[gatewayv1.CheckSourceRequest]) (*connect.Response[gatewayv1.CheckSourceResponse], error) {
+	cur, err := rt.cat.Config()
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, err)
+	}
+	pb := &configv1.Config{Source: req.Msg.Source}
+	domain.KeepStored(pb, cur) // *** means the stored secret
+	c, err := domain.ParseConfig(pb)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	zips, ignored, wouldRemove, err := rt.cat.CheckSource(ctx, c.Source)
+	slices.SortFunc(zips, rt.cat.Current().Config.NewestFirst)
+	out := &gatewayv1.CheckSourceResponse{
+		Zips:        int64(len(zips)),
+		Versions:    zips[:min(len(zips), maxListed)],
+		WouldRemove: wouldRemove,
+		Ignored:     ignored[:min(len(ignored), maxListed)],
+	}
+	if err != nil {
+		out.Error = err.Error()
+	}
+	return connect.NewResponse(out), nil
 }
 
 // preview is what saving pb would serve, under the loaded bundles.

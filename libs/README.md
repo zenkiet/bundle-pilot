@@ -89,7 +89,9 @@ sequenceDiagram
 
 Your app sends facts, and the gateway's rules decide. You pilot a build with
 some stores, raise a percentage, or back out of a release from the admin UI,
-with no new deploy of the app.
+with no new deploy of the app. A build can also tell the admin app its commit,
+branch and notes with a few meta tags: see
+[Release tags](../docs/reference.md#release-tags).
 
 ## Versioning
 

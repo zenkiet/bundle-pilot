@@ -19,10 +19,18 @@ var errNoToken = errors.New("no such token")
 
 func (rt *Router) ListTokens(context.Context, *connect.Request[gatewayv1.ListTokensRequest]) (*connect.Response[gatewayv1.ListTokensResponse], error) {
 	out := &gatewayv1.ListTokensResponse{}
+	used := rt.cat.TokensUsed()
 	for _, t := range rt.cat.Current().Config.Tokens {
 		tok := &gatewayv1.Token{Name: t.Name, Scope: t.Scope}
 		if !t.Created.IsZero() { // a token written into config.pb by hand may have no date
 			tok.Created = timestamppb.New(t.Created)
+		}
+		if !t.Expires.IsZero() {
+			tok.ExpiresAt = timestamppb.New(t.Expires)
+		}
+		at := used[t.Name]
+		if !at.IsZero() && !at.Before(t.Created.Truncate(time.Hour)) { // earlier: a deleted token of that name
+			tok.LastUsed = timestamppb.New(at)
 		}
 		out.Tokens = append(out.Tokens, tok)
 	}
@@ -44,7 +52,14 @@ func (rt *Router) CreateToken(ctx context.Context, req *connect.Request[gatewayv
 		Sha256:  hash,
 		Created: time.Now().UTC().Format(time.RFC3339),
 	}
-	_, err := rt.cat.UpdateConfig(c.who, func(cur *configv1.Config) (*configv1.Config, error) {
+	if req.Msg.ExpiresAt != nil {
+		exp := req.Msg.ExpiresAt.AsTime()
+		if !exp.After(time.Now()) {
+			return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("expiresAt has passed"))
+		}
+		token.Expires = exp.UTC().Format(time.RFC3339)
+	}
+	_, err := rt.cat.UpdateConfig(c.who, "", func(cur *configv1.Config) (*configv1.Config, error) {
 		cur.Tokens = append(cur.Tokens, token)
 		return cur, nil
 	})
@@ -58,7 +73,7 @@ func (rt *Router) CreateToken(ctx context.Context, req *connect.Request[gatewayv
 
 func (rt *Router) DeleteToken(ctx context.Context, req *connect.Request[gatewayv1.DeleteTokenRequest]) (*connect.Response[gatewayv1.DeleteTokenResponse], error) {
 	name, c := req.Msg.Name, from(ctx)
-	_, err := rt.cat.UpdateConfig(c.who, func(cur *configv1.Config) (*configv1.Config, error) {
+	_, err := rt.cat.UpdateConfig(c.who, "", func(cur *configv1.Config) (*configv1.Config, error) {
 		before := len(cur.Tokens)
 		cur.Tokens = slices.DeleteFunc(cur.Tokens, func(t *configv1.Token) bool { return t.Name == name })
 		if len(cur.Tokens) == before {

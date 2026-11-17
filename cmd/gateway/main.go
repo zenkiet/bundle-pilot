@@ -3,15 +3,19 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"rsc.io/qr"
 
 	"github.com/zenkiet/bundle-pilot/internal/domain"
 	"github.com/zenkiet/bundle-pilot/internal/env"
@@ -33,6 +37,8 @@ func main() {
 			os.Exit(check(cfg, os.Args[2:]))
 		case "import":
 			os.Exit(importConfig(cfg, os.Args[2:]))
+		case "setup":
+			os.Exit(setup(cfg, os.Args[2:]))
 		case "health":
 			os.Exit(health(cfg))
 		}
@@ -57,7 +63,7 @@ func run(cfg env.Config, log *slog.Logger) error {
 	}
 	if t := cat.Current().Setup; t != "" {
 		// no LOG_LEVEL hides Error
-		log.Error("first-run setup: enter this token in the Bundle Pilot app, or send it as X-Setup-Token with UpdateConfig", "token", t)
+		log.Error("first-run setup: enter this token in the Bundle Pilot app (gateway setup shows it with a QR), or send it as X-Setup-Token with UpdateConfig", "token", t)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -172,8 +178,58 @@ func writeImported(file, dist string) error {
 		return err
 	}
 	domain.HashAuth(pb)
-	_, err = src.WriteConfig(pb, "cli")
+	_, err = src.WriteConfig(pb, "cli", "")
 	return err
+}
+
+func setup(cfg env.Config, args []string) int {
+	fl := flag.NewFlagSet("setup", flag.ContinueOnError)
+	addr := fl.String("url", "", "the gateway's address, for the app to add")
+	if fl.Parse(args) != nil {
+		return 2
+	}
+	if fl.NArg() > 0 {
+		cfg.Dist = fl.Arg(0)
+	}
+	token, err := bundlefs.ReadSetupToken(cfg.Dist)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "no setup running in "+cfg.Dist+": it runs while the gateway has no config.pb")
+		return 1
+	}
+	query := "setup=" + url.QueryEscape(token)
+	if *addr != "" {
+		query = "url=" + url.QueryEscape(*addr) + "&" + query
+	}
+	link := "bundlepilot://add?" + query
+	fmt.Println("token:", token)
+	fmt.Println("link: ", link)
+	info, err := os.Stdout.Stat()
+	if err == nil && info.Mode()&os.ModeCharDevice != 0 { // a terminal, not a pipe
+		printQR(link)
+	}
+	return 0
+}
+
+// printQR draws two module rows per line, inside the 2-module border scanners need.
+func printQR(text string) {
+	code, err := qr.Encode(text, qr.L)
+	if err != nil {
+		return
+	}
+	blocks := [4]string{" ", "▀", "▄", "█"}
+	bit := func(x, y int) int {
+		if code.Black(x, y) { // false outside the code, which draws the border
+			return 1
+		}
+		return 0
+	}
+	for y := -2; y < code.Size+2; y += 2 {
+		line := "\x1b[30;47m" // black on white, whatever the terminal's theme
+		for x := -2; x < code.Size+2; x++ {
+			line += blocks[bit(x, y)+2*bit(x, y+1)]
+		}
+		fmt.Println(line + "\x1b[0m")
+	}
 }
 
 // health serves HEALTHCHECK in images without curl.

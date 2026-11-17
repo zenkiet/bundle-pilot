@@ -22,7 +22,7 @@ const (
 
 // record keeps pb as clients see it, so secrets never land in history, and skips a save they
 // cannot see. The first record also keeps old, so a revert can reach the config before history.
-func (s *Source) record(old *configv1.Config, oldAt time.Time, pb *configv1.Config, by string) (string, error) {
+func (s *Source) record(old *configv1.Config, oldAt time.Time, pb *configv1.Config, by, note string) (string, error) {
 	if old != nil && domain.ETag(old) == domain.ETag(pb) {
 		return "", nil
 	}
@@ -31,11 +31,11 @@ func (s *Source) record(old *configv1.Config, oldAt time.Time, pb *configv1.Conf
 	}
 	ids, err := s.revisions()
 	if err == nil && len(ids) == 0 && old != nil {
-		if _, err := s.writeRevision(oldAt, "", old); err != nil {
+		if _, err := s.writeRevision(oldAt, "", "", old); err != nil {
 			return "", err
 		}
 	}
-	rev, err := s.writeRevision(time.Now(), by, pb)
+	rev, err := s.writeRevision(time.Now(), by, note, pb)
 	if err != nil {
 		return "", err
 	}
@@ -46,12 +46,12 @@ func (s *Source) record(old *configv1.Config, oldAt time.Time, pb *configv1.Conf
 	return rev, err
 }
 
-func (s *Source) writeRevision(at time.Time, by string, pb *configv1.Config) (string, error) {
+func (s *Source) writeRevision(at time.Time, by, note string, pb *configv1.Config) (string, error) {
 	cfg, err := domain.EncodeConfig(domain.Redacted(pb))
 	if err != nil {
 		return "", err
 	}
-	b, err := proto.Marshal(&configv1.Revision{By: by, Config: cfg})
+	b, err := proto.Marshal(&configv1.Revision{By: by, Note: note, Config: cfg})
 	if err != nil {
 		return "", err
 	}
@@ -87,7 +87,7 @@ func (s *Source) History() ([]domain.Revision, error) {
 			continue
 		}
 		at, _ := time.Parse(revisionID, id)
-		out = append(out, domain.Revision{ID: id, At: at, By: rev.By, Config: cfg})
+		out = append(out, domain.Revision{ID: id, At: at, By: rev.By, Note: rev.Note, Config: cfg})
 	}
 	return out, err
 }
