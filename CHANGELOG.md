@@ -2,6 +2,12 @@
 All notable changes to this project will be documented in this file. See [conventional commits](https://www.conventionalcommits.org/) for commit guidelines.
 
 - - -
+## v0.6.0 - 2026-11-17
+#### 🚀 Features
+- (**api**) ✨ add source checks, config notes, issue events, token expiry, release tags and setup QR - (824ae48) - *zenkiet*
+
+- - -
+
 ## v0.5.0 - 2026-11-14
 #### 🚀 Features
 - (**api**) ✨ keep app sessions for 30 days and accept a wildcard CORS origin - (93b9934) - *zenkiet*
